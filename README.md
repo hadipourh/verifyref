@@ -17,17 +17,18 @@ Manually checking dozens of references was time-consuming, so I created VerifyRe
 Here is the summary of the output of the tool for that paper: 
 
 ```sh
-                 📊 Verification Summary
+                 [*] Verification Summary
 ╭──────────────────────────┬───────┬────────────┬────────╮
 │ Classification           │ Count │ Percentage │ Status │
 ├──────────────────────────┼───────┼────────────┼────────┤
-│ ✅ AUTHENTIC             │     9 │      50.0% │   ●    │
-│ 🔍 SUSPICIOUS            │     8 │      44.4% │   ●    │
-│ ❌ FAKE                  │     0 │       0.0% │   ○    │
-│ 🔄 AUTHOR MANIPULATION   │     0 │       0.0% │   ○    │
-│ 🚫 FABRICATED            │     1 │       5.6% │   ●    │
-│ ❓ INCONCLUSIVE          │     0 │       0.0% │   ○    │
+│ [+] AUTHENTIC            │     9 │      50.0% │   ●    │
+│ [?] SUSPICIOUS           │     8 │      44.4% │   ●    │
+│ [X] FAKE                 │     0 │       0.0% │   ○    │
+│ [~] AUTHOR MANIPULATION  │     0 │       0.0% │   ○    │
+│ [-] FABRICATED           │     1 │       5.6% │   ●    │
+│ [!] INCONCLUSIVE         │     0 │       0.0% │   ○    │
 ╰──────────────────────────┴───────┴────────────┴────────╯
+
 🔴 HIGH - Notable fraud or suspicious references detected
 ```
 
@@ -45,7 +46,7 @@ This tool helps reviewers quickly identify potentially fabricated references and
   - [Classification System](#classification-system)
   - [Database Integration](#database-integration)
   - [Configuration](#configuration)
-  - [AI-Powered Verification](#ai-powered-verification)
+    - [AI-Powered Verification](#ai-powered-verification)
   - [Usage Scenarios](#usage-scenarios)
   - [Troubleshooting](#troubleshooting)
   - [Project Structure](#project-structure)
@@ -71,7 +72,7 @@ This tool helps reviewers quickly identify potentially fabricated references and
 ### Docker (Recommended)
 
 ```bash
-git clone https://github.com/user/verifyref.git
+git clone https://github.com/hadipourh/verifyref.git
 cd verifyref
 docker build -t verifyref .
 
@@ -81,18 +82,18 @@ docker run -it --rm -v "$(pwd):/app/workspace" verifyref
 # Once inside the container, GROBID is already running:
 cd /app/workspace/
 
-# Verify the references in a PDF
-verifyref paper.pdf -o results.txt
-
 # For citation search only
 verifyref --cite "Autoguess A Tool for Finding Guess-and-Determine Attacks"
+
+# Verify the references in a PDF
+verifyref paper.pdf -o results.txt
 ```
 
 ### Manual Installation
 
 ```bash
 # Clone and install
-git clone https://github.com/user/verifyref.git
+git clone https://github.com/hadipourh/verifyref.git
 cd verifyref
 
 # Create and activate virtual environment
@@ -102,18 +103,17 @@ source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 # Install dependencies
 pip install -r requirements.txt
 
-# Configure environment
-cp .env.example .env
-# Edit .env: Set CROSSREF_EMAIL=your.email@domain.com
+# Configure API keys and email
+# Edit config.py: Set CROSSREF_EMAIL and optional API keys
 
 # Start GROBID (for PDF processing)
 docker run -d -p 8070:8070 lfoppiano/grobid:0.8.2
 
-# Verify PDF references 
-python verifyref.py paper.pdf --output results.txt
-
 # Search for citations
 python verifyref.py --cite "Revisiting Differential-Linear Attacks via a Boomerang Perspective"
+
+# Verify PDF references 
+python verifyref.py paper.pdf --output results.txt
 ```
 
 ### Advanced Options
@@ -129,7 +129,7 @@ python verifyref.py --cite "Finding the Impossible Impossible-Differential Attac
 python verifyref.py --cite "gene therapy" --context bio
 
 # AI-enhanced verification
-python verifyref.py paper.pdf --enable-ai # do not forget to set OPENAI_API_KEY in .env
+python verifyref.py paper.pdf --enable-ai # requires OPENAI_API_KEY in config.py
 
 # Custom similarity threshold
 python verifyref.py paper.pdf --similarity-threshold 0.8
@@ -161,21 +161,31 @@ VerifyRef uses a 5-category system to evaluate reference authenticity:
 
 ## Configuration
 
-**Required**: Email for CrossRef API access
-```bash
-cp .env.example .env
-# Edit .env: CROSSREF_EMAIL=your.email@domain.com
+**Setup**: Edit API keys and email in `config.py`
+
+1. Open `config.py` in your editor
+2. **Required**: Set `CROSSREF_EMAIL` to your email address
+3. **Optional**: Add API keys for enhanced features:
+   - `SEMANTIC_SCHOLAR_API_KEY` - Higher rate limits (recommended)
+   - `OPENAI_API_KEY` - AI-powered fraud detection
+   - `NCBI_API_KEY` - Higher PubMed rate limits
+
+```python
+# In config.py - Edit these values:
+CROSSREF_EMAIL = "your.email@domain.com"  # ← REQUIRED
+SEMANTIC_SCHOLAR_API_KEY = "your-key-here"  # ← Optional
+OPENAI_API_KEY = "your-key-here"  # ← Optional
+NCBI_API_KEY = "your-key-here"  # ← Optional
 ```
 
-**Optional API Keys**: OPENAI_API_KEY (AI verification), SEMANTIC_SCHOLAR_API_KEY (higher limits), NCBI_API_KEY (PubMed access)
-
-## AI-Powered Verification
+### AI-Powered Verification
 
 Optional GPT-based analysis for enhanced fraud detection.
 
+1. Set `OPENAI_API_KEY` in `config.py`
+2. Enable with `--enable-ai` flag:
+
 ```bash
-# Set API key and enable
-export OPENAI_API_KEY="your-key"
 python verifyref.py paper.pdf --enable-ai
 ```
 
@@ -219,10 +229,9 @@ done
 ```
 verifyref/
 ├── verifyref.py                 # Main CLI tool
-├── config.py                    # Configuration
+├── config.py                    # Configuration (edit API keys here)
 ├── requirements.txt             # Dependencies
 ├── Dockerfile                   # Container setup
-├── .env.example                 # Environment template
 ├── grobid/
 │   └── client.py               # PDF extraction
 ├── extractor/
@@ -263,9 +272,10 @@ VerifyRef follows strict ethical guidelines:
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, guidelines, and testing requirements.
 
 ```bash
-git clone https://github.com/user/verifyref.git && cd verifyref
+git clone https://github.com/hadipourh/verifyref.git && cd verifyref
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt && pytest tests/
+# Edit config.py to set your API keys
 ```
 
 ## License
