@@ -1,0 +1,18 @@
+include README.md
+include LICENSE
+include LICENSE_HEADER.txt
+include requirements.txt
+include .env.example
+include ETHICAL_GUIDELINES.md
+include CONTRIBUTING.md
+recursive-include extractor *.py
+recursive-include verifier *.py
+recursive-include utils *.py
+recursive-include tests *.py
+recursive-exclude * __pycache__
+recursive-exclude * *.py[co]
+recursive-exclude * *.pyc
+global-exclude .DS_Store
+global-exclude *.pdf
+global-exclude results.txt
+global-exclude output.txt

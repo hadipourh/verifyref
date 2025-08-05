@@ -1,0 +1,878 @@
+"""
+VerifyRef - High-performance academic reference verification tool
+Copyright (C) 2025 Hosein Hadipour <hsn.hadipour@gmail.com>
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+"""
+
+
+import logging
+from typing import Dict, List, Any, Tuple, Optional
+from dataclasses import dataclass
+from enum import Enum
+
+from utils.helpers import calculate_text_similarity, normalize_text
+from utils.academic_matching import calculate_venue_similarity, calculate_author_similarity
+from config import CLASSIFICATION_CONFIG
+
+logger = logging.getLogger(__name__)
+
+class ClassificationResult(Enum):
+    """Classification results for reference authenticity"""
+    AUTHENTIC = "authentic"
+    SUSPICIOUS = "suspicious"
+    FAKE = "fake"
+    AUTHOR_MANIPULATION = "author_manipulation"  # New: for detecting author swapping fraud
+    FABRICATED = "fabricated"  # New: for completely made-up references
+    INCONCLUSIVE = "inconclusive"
+
+@dataclass
+class VerificationResult:
+    """Result of reference verification"""
+    classification: ClassificationResult
+    confidence: float
+    similarity_score: float
+    matched_paper: Optional[Dict[str, Any]]
+    reasons: List[str]
+    details: Dict[str, Any]
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert VerificationResult to JSON-serializable dictionary"""
+        return {
+            'classification': self.classification.value if hasattr(self.classification, 'value') else str(self.classification),
+            'confidence': self.confidence,
+            'similarity_score': self.similarity_score,
+            'matched_paper': self.matched_paper,
+            'reasons': self.reasons,
+            'details': self.details
+        }
+
+class ReferenceClassifier:
+    """
+    Classifier for determining the authenticity of academic references
+    Enhanced with CryptoDB author verification for cryptography papers
+    """
+    
+    def __init__(self, enable_cryptodb: bool = True, enable_ai_verification: bool = True):
+        """
+        Initialize the reference classifier
+        
+        Args:
+            enable_cryptodb: Whether to enable CryptoDB author verification (optional)
+            enable_ai_verification: Whether to enable AI-powered verification (optional)
+        """
+        # Load configuration settings
+        self.similarity_threshold = CLASSIFICATION_CONFIG["similarity_threshold"]
+        self.suspicious_threshold = CLASSIFICATION_CONFIG.get("suspicious_threshold", 0.2)
+        self.title_weight = CLASSIFICATION_CONFIG["title_weight"]
+        self.author_weight = CLASSIFICATION_CONFIG["author_weight"]
+        self.venue_weight = CLASSIFICATION_CONFIG["venue_weight"]
+        self.year_weight = CLASSIFICATION_CONFIG["year_weight"]
+        self.max_year_difference = CLASSIFICATION_CONFIG["max_year_difference"]
+        
+        # Advanced fraud detection settings
+        self.enable_fraud_detection = CLASSIFICATION_CONFIG.get("enable_fraud_detection", True)
+        self.author_manipulation_threshold = CLASSIFICATION_CONFIG.get("author_manipulation_threshold", 0.85)
+        self.multi_database_requirement = CLASSIFICATION_CONFIG.get("multi_database_requirement", False)
+        self.single_database_penalty = CLASSIFICATION_CONFIG.get("single_database_penalty", 0.05)
+        
+        # Classification confidence adjustments
+        self.authentic_confidence_boost = CLASSIFICATION_CONFIG.get("authentic_confidence_boost", 0.1)
+        self.fraud_confidence_boost = CLASSIFICATION_CONFIG.get("fraud_confidence_boost", 0.1)
+        self.inconclusive_threshold = CLASSIFICATION_CONFIG.get("inconclusive_threshold", 0.15)
+        
+        # Log current rigor level
+        rigor_level = CLASSIFICATION_CONFIG.get("rigor_level", "balanced")
+        logger.info(f"Verification rigor level: {rigor_level}")
+        
+        # Optional CryptoDB integration
+        self.cryptodb_client = None
+        if enable_cryptodb:
+            try:
+                from .cryptodb_author_client import CryptoDBAuthorClient
+                from config import DATABASE_CONFIG
+                cryptodb_config = DATABASE_CONFIG.get("cryptodb", {})
+                self.cryptodb_client = CryptoDBAuthorClient(
+                    enable_cryptodb=cryptodb_config.get("enabled", True),
+                    timeout=cryptodb_config.get("timeout", 5)
+                )
+            except ImportError:
+                logger.warning("CryptoDB client not available, author verification will be limited")
+            except Exception as e:
+                logger.warning(f"Failed to initialize CryptoDB client: {e}")
+        
+        # Optional AI verification integration
+        self.ai_verifier = None
+        if enable_ai_verification:
+            # Check if AI verification is enabled in config before initializing
+            try:
+                from config import DATABASE_CONFIG
+                ai_config = DATABASE_CONFIG.get("ai_verification", {})
+                ai_enabled = ai_config.get("enabled", True)
+                
+                if not ai_enabled:
+                    logger.info("AI verification disabled in configuration")
+                else:
+                    from .ai_verifier import AIReferenceVerifier
+                    self.ai_verifier = AIReferenceVerifier()
+                    if self.ai_verifier.is_available():
+                        logger.info("AI-powered reference verification enabled")
+                    else:
+                        logger.info("AI reference verification not available (no API key)")
+            except ImportError:
+                logger.warning("AI verifier not available")
+            except Exception as e:
+                logger.warning(f"Failed to initialize AI verifier: {e}")
+    
+    def classify_reference(self, 
+                         extracted_ref: Dict[str, Any], 
+                         search_results: List[Dict[str, Any]]) -> VerificationResult:
+        """
+        Classify a reference based on search results from academic databases
+        Enhanced with fraud detection for author manipulation and fabricated references
+        
+        Args:
+            extracted_ref: Reference extracted from the document
+            search_results: Search results from academic databases
+            
+        Returns:
+            VerificationResult containing classification and details
+        """
+        if not search_results:
+            return VerificationResult(
+                classification=ClassificationResult.FABRICATED,  # Changed: No results = likely fabricated
+                confidence=0.8,  # High confidence in fabrication if no DB has it
+                similarity_score=0.0,
+                matched_paper=None,
+                reasons=["Reference not found in any academic database - likely fabricated"],
+                details={"search_attempted": True, "results_count": 0, "fraud_type": "fabricated"}
+            )
+        
+        # Enhanced fraud detection
+        fraud_result = self._detect_fraud(extracted_ref, search_results)
+        if fraud_result:
+            return fraud_result
+        
+        # Find the best match among search results
+        best_match, best_score = self._find_best_match(extracted_ref, search_results)
+        
+        # Enhanced multi-database validation
+        validation_result = self._validate_across_databases(extracted_ref, search_results, best_match, best_score)
+        if validation_result:
+            return validation_result
+        
+        # Standard classification with stricter requirements
+        classification, confidence, reasons = self._determine_enhanced_classification(
+            extracted_ref, best_match, best_score, search_results
+        )
+        
+        # AI-powered verification for additional insight
+        ai_verification = None
+        if self.ai_verifier and self.ai_verifier.is_available():
+            try:
+                ai_verification = self.ai_verifier.verify_reference(
+                    extracted_ref, search_results
+                )
+                if ai_verification:
+                    # Incorporate AI analysis into classification
+                    classification, confidence, reasons = self._incorporate_ai_analysis(
+                        classification, confidence, reasons, ai_verification
+                    )
+            except Exception as e:
+                logger.warning(f"AI verification failed: {e}")
+        
+        return VerificationResult(
+            classification=classification,
+            confidence=confidence,
+            similarity_score=best_score,
+            matched_paper=best_match,
+            reasons=reasons,
+            details={
+                "search_attempted": True,
+                "results_count": len(search_results),
+                "best_match_index": search_results.index(best_match) if best_match in search_results else -1,
+                "similarity_breakdown": self._get_similarity_breakdown(extracted_ref, best_match) if best_match else {},
+                "databases_searched": len(set(r.get('source', 'unknown') for r in search_results)),
+                "ai_verification": ai_verification.metadata if ai_verification else None
+            }
+        )
+    
+    def _find_best_match(self, 
+                        extracted_ref: Dict[str, Any], 
+                        search_results: List[Dict[str, Any]]) -> Tuple[Optional[Dict[str, Any]], float]:
+        """
+        Find the best matching paper from search results
+        
+        Args:
+            extracted_ref: Reference extracted from document
+            search_results: List of papers from academic database
+            
+        Returns:
+            Tuple of (best_match_paper, similarity_score)
+        """
+        best_match = None
+        best_score = 0.0
+        
+        for paper in search_results:
+            score = self._calculate_overall_similarity(extracted_ref, paper)
+            if score > best_score:
+                best_score = score
+                best_match = paper
+        
+        return best_match, best_score
+    
+    def _calculate_overall_similarity(self, 
+                                    extracted_ref: Dict[str, Any], 
+                                    paper: Dict[str, Any]) -> float:
+        """
+        Calculate weighted similarity score between extracted reference and database paper
+        
+        Args:
+            extracted_ref: Reference from document
+            paper: Paper from academic database
+            
+        Returns:
+            Weighted similarity score (0.0 to 1.0)
+        """
+        # Calculate individual similarity scores
+        title_sim = self._calculate_title_similarity(extracted_ref, paper)
+        author_sim = self._calculate_author_similarity(extracted_ref, paper)
+        venue_sim = self._calculate_venue_similarity(extracted_ref, paper)
+        year_sim = self._calculate_year_similarity(extracted_ref, paper)
+        
+        # Calculate weighted average
+        overall_similarity = (
+            title_sim * self.title_weight +
+            author_sim * self.author_weight +
+            venue_sim * self.venue_weight +
+            year_sim * self.year_weight
+        )
+        
+        return overall_similarity
+    
+    def _calculate_title_similarity(self, extracted_ref: Dict[str, Any], paper: Dict[str, Any]) -> float:
+        """Calculate title similarity between reference and paper"""
+        ref_title = normalize_text(extracted_ref.get('title', ''))
+        paper_title = normalize_text(paper.get('title', ''))
+        
+        if not ref_title or not paper_title:
+            return 0.0
+        
+        return calculate_text_similarity(ref_title, paper_title)
+    
+    def _calculate_author_similarity(self, extracted_ref: Dict[str, Any], paper: Dict[str, Any]) -> float:
+        """
+        Calculate author similarity between reference and paper
+        Enhanced with CryptoDB canonical name matching for crypto papers
+        """
+        ref_authors = extracted_ref.get('authors', [])
+        paper_authors = paper.get('authors', [])
+        
+        if not ref_authors or not paper_authors:
+            return 0.0
+        
+        # Convert paper authors to list of names
+        paper_author_names = []
+        for author in paper_authors:
+            if isinstance(author, dict):
+                name = author.get('name', '')
+            else:
+                name = str(author)
+            if name:
+                paper_author_names.append(name)
+        
+        # Enhanced similarity with CryptoDB for crypto papers
+        if self.cryptodb_client:
+            venue = paper.get('venue', '')
+            enhancement = self.cryptodb_client.enhance_author_comparison(
+                ref_authors, paper_author_names, venue
+            )
+            
+            if enhancement.get('enhanced', False):
+                # Use CryptoDB canonical matching
+                matched_count = len(enhancement.get('matched_authors', []))
+                total_ref_authors = len(ref_authors)
+                
+                if total_ref_authors > 0:
+                    # Enhanced similarity based on CryptoDB canonical matches
+                    cryptodb_similarity = matched_count / total_ref_authors
+                    
+                    # Combine with traditional similarity (weighted average)
+                    traditional_similarity = calculate_author_similarity(ref_authors, paper_author_names)
+                    
+                    # Give more weight to CryptoDB results for crypto papers
+                    return 0.7 * cryptodb_similarity + 0.3 * traditional_similarity
+        
+        # Fallback to traditional author matching
+        return calculate_author_similarity(ref_authors, paper_author_names)
+    
+    def _calculate_venue_similarity(self, extracted_ref: Dict[str, Any], paper: Dict[str, Any]) -> float:
+        """Calculate venue similarity between reference and paper"""
+        ref_venue = extracted_ref.get('venue', '')
+        
+        # Try different venue fields from the paper
+        paper_venue = ''
+        for field in ['venue', 'journal', 'conference', 'publicationVenue']:
+            venue_data = paper.get(field)
+            if venue_data:
+                if isinstance(venue_data, dict):
+                    paper_venue = venue_data.get('name', '')
+                else:
+                    paper_venue = str(venue_data)
+                break
+        
+        if not ref_venue or not paper_venue:
+            return 0.0
+        
+        # Use improved academic venue matching
+        return calculate_venue_similarity(ref_venue, paper_venue)
+    
+    def _calculate_year_similarity(self, extracted_ref: Dict[str, Any], paper: Dict[str, Any]) -> float:
+        """Calculate year similarity between reference and paper"""
+        ref_year = extracted_ref.get('year')
+        paper_year = paper.get('year')
+        
+        # Convert years to integers
+        try:
+            if isinstance(ref_year, str):
+                ref_year = int(ref_year)
+            elif ref_year is None:
+                ref_year = 0
+        except (ValueError, TypeError):
+            ref_year = 0
+            
+        try:
+            if isinstance(paper_year, str):
+                paper_year = int(paper_year)
+            elif paper_year is None:
+                paper_year = 0
+        except (ValueError, TypeError):
+            # Try to extract year from publication date
+            pub_date = paper.get('publicationDate', '')
+            if pub_date:
+                try:
+                    paper_year = int(pub_date[:4])
+                except (ValueError, TypeError):
+                    paper_year = 0
+            else:
+                paper_year = 0
+        
+        if not ref_year or not paper_year:
+            return 0.0
+        
+        year_diff = abs(ref_year - paper_year)
+        
+        if year_diff == 0:
+            return 1.0
+        elif year_diff <= self.max_year_difference:
+            return 1.0 - (year_diff / self.max_year_difference)
+        else:
+            return 0.0
+    
+    def _determine_classification(self, 
+                                extracted_ref: Dict[str, Any], 
+                                best_match: Optional[Dict[str, Any]], 
+                                similarity_score: float) -> Tuple[ClassificationResult, float, List[str]]:
+        """
+        Determine the final classification based on similarity and other factors
+        
+        Args:
+            extracted_ref: Reference from document
+            best_match: Best matching paper from database
+            similarity_score: Overall similarity score
+            
+        Returns:
+            Tuple of (classification, confidence, reasons)
+        """
+        reasons = []
+        
+        # High similarity threshold - likely authentic
+        if similarity_score >= self.similarity_threshold:
+            confidence = min(0.95, similarity_score + 0.1)
+            reasons.append(f"High similarity score ({similarity_score:.2f})")
+            
+            if best_match:
+                # Additional checks for authenticity
+                if best_match.get('citationCount', 0) > 0:
+                    reasons.append("Paper has citations in database")
+                    confidence += 0.05
+                
+                if best_match.get('doi'):
+                    reasons.append("Paper has DOI")
+                    confidence += 0.02
+            
+            return ClassificationResult.AUTHENTIC, min(0.99, confidence), reasons
+        
+        # Medium similarity threshold - suspicious
+        elif similarity_score >= (self.similarity_threshold * 0.7):
+            confidence = similarity_score * 0.8
+            reasons.append(f"Medium similarity score ({similarity_score:.2f})")
+            reasons.append("Reference may be partially correct but needs verification")
+            
+            return ClassificationResult.SUSPICIOUS, confidence, reasons
+        
+        # Low similarity but some match found - suspicious or fake
+        elif similarity_score > 0.2:  # Lowered from 0.3 to 0.2
+            confidence = 0.6
+            reasons.append(f"Low similarity score ({similarity_score:.2f})")
+            
+            # Check if this might be a distorted version of a real paper
+            if best_match:
+                title_sim = self._calculate_title_similarity(extracted_ref, best_match)
+                if title_sim > 0.4:  # Lowered from 0.5 to 0.4
+                    reasons.append("Title partially matches existing paper - may be corrupted reference")
+                    return ClassificationResult.SUSPICIOUS, confidence, reasons
+            
+            reasons.append("Low similarity suggests possible formatting issues or incomplete data")
+            return ClassificationResult.SUSPICIOUS, confidence, reasons  # Changed from FAKE to SUSPICIOUS
+        
+        # Very low or no similarity - inconclusive rather than fake
+        else:
+            if not best_match:
+                reasons.append("No similar papers found in database - paper may not be indexed")
+                reasons.append("Cannot verify authenticity without database match")
+                return ClassificationResult.INCONCLUSIVE, 0.3, reasons
+            else:
+                confidence = 0.5  # Lowered from 0.8
+                reasons.append("Very low similarity to known papers")
+                reasons.append("Reference may be from specialized venue or not yet indexed")
+                return ClassificationResult.INCONCLUSIVE, confidence, reasons  # Changed from FAKE to INCONCLUSIVE
+    
+    def _get_similarity_breakdown(self, extracted_ref: Dict[str, Any], paper: Dict[str, Any]) -> Dict[str, float]:
+        """Get detailed breakdown of similarity scores"""
+        if not paper:
+            return {}
+        
+        return {
+            'title_similarity': self._calculate_title_similarity(extracted_ref, paper),
+            'author_similarity': self._calculate_author_similarity(extracted_ref, paper),
+            'venue_similarity': self._calculate_venue_similarity(extracted_ref, paper),
+            'year_similarity': self._calculate_year_similarity(extracted_ref, paper)
+        }
+    
+    def classify_batch(self, 
+                      references_with_results: List[Tuple[Dict[str, Any], List[Dict[str, Any]]]]) -> List[VerificationResult]:
+        """
+        Classify a batch of references
+        
+        Args:
+            references_with_results: List of (reference, search_results) tuples
+            
+        Returns:
+            List of VerificationResult objects
+        """
+        results = []
+        
+        for extracted_ref, search_results in references_with_results:
+            try:
+                result = self.classify_reference(extracted_ref, search_results)
+                results.append(result)
+            except Exception as e:
+                logger.error(f"Error classifying reference: {e}")
+                # Add error result
+                results.append(VerificationResult(
+                    classification=ClassificationResult.INCONCLUSIVE,
+                    confidence=0.0,
+                    similarity_score=0.0,
+                    matched_paper=None,
+                    reasons=[f"Classification error: {str(e)}"],
+                    details={"error": True}
+                ))
+        
+        return results
+    
+    def generate_summary_report(self, results: List[VerificationResult]) -> Dict[str, Any]:
+        """
+        Generate a summary report of classification results
+        
+        Args:
+            results: List of VerificationResult objects
+            
+        Returns:
+            Summary report dictionary
+        """
+        total_refs = len(results)
+        
+        if total_refs == 0:
+            return {"total_references": 0, "message": "No references to analyze"}
+        
+        # Count classifications
+        classification_counts = {}
+        for classification in ClassificationResult:
+            classification_counts[classification.value] = sum(
+                1 for r in results if r.classification == classification
+            )
+        
+        # Calculate statistics
+        authentic_count = classification_counts[ClassificationResult.AUTHENTIC.value]
+        suspicious_count = classification_counts[ClassificationResult.SUSPICIOUS.value]
+        fake_count = classification_counts[ClassificationResult.FAKE.value]
+        author_manipulation_count = classification_counts[ClassificationResult.AUTHOR_MANIPULATION.value]
+        fabricated_count = classification_counts[ClassificationResult.FABRICATED.value]
+        inconclusive_count = classification_counts[ClassificationResult.INCONCLUSIVE.value]
+        
+        # Calculate percentages
+        authentic_pct = (authentic_count / total_refs) * 100
+        suspicious_pct = (suspicious_count / total_refs) * 100
+        fake_pct = (fake_count / total_refs) * 100
+        author_manipulation_pct = (author_manipulation_count / total_refs) * 100
+        fabricated_pct = (fabricated_count / total_refs) * 100
+        inconclusive_pct = (inconclusive_count / total_refs) * 100
+        
+        # Calculate fraud percentage (author manipulation + fabricated)
+        fraud_pct = author_manipulation_pct + fabricated_pct
+        
+        # Calculate average similarity and confidence
+        avg_similarity = sum(r.similarity_score for r in results) / total_refs
+        avg_confidence = sum(r.confidence for r in results) / total_refs
+        
+        return {
+            "total_references": total_refs,
+            "classification_counts": classification_counts,
+            "percentages": {
+                "authentic": round(authentic_pct, 1),
+                "suspicious": round(suspicious_pct, 1),
+                "fake": round(fake_pct, 1),
+                "author_manipulation": round(author_manipulation_pct, 1),
+                "fabricated": round(fabricated_pct, 1),
+                "inconclusive": round(inconclusive_pct, 1),
+                "total_fraud": round(fraud_pct, 1)  # Combined fraud percentage
+            },
+            "statistics": {
+                "average_similarity_score": round(avg_similarity, 3),
+                "average_confidence": round(avg_confidence, 3),
+                "high_confidence_results": sum(1 for r in results if r.confidence > 0.8),
+                "verified_with_matches": sum(1 for r in results if r.matched_paper is not None)
+            },
+            "risk_assessment": self._assess_overall_risk(authentic_pct, fake_pct, suspicious_pct, fraud_pct)
+        }
+    
+    def _detect_fraud(self, extracted_ref: Dict[str, Any], search_results: List[Dict[str, Any]]) -> Optional[VerificationResult]:
+        """
+        Detect various types of reference fraud including author manipulation
+        Enhanced with CryptoDB verification and configurable thresholds
+        
+        Args:
+            extracted_ref: Reference from document
+            search_results: All search results from databases
+            
+        Returns:
+            VerificationResult if fraud detected, None otherwise
+        """
+        # Skip fraud detection if disabled
+        if not self.enable_fraud_detection:
+            return None
+            
+        # Look for author manipulation (same title, different authors)
+        for paper in search_results:
+            title_sim = self._calculate_title_similarity(extracted_ref, paper)
+            author_sim = self._calculate_author_similarity(extracted_ref, paper)
+            
+            # Enhanced fraud detection with configurable thresholds
+            ref_authors = extracted_ref.get('authors', [])
+            paper_authors = paper.get('authors', [])
+            
+            # High title similarity but very low author similarity = potential author manipulation
+            # Use configurable threshold for title similarity
+            if title_sim > self.author_manipulation_threshold and author_sim < 0.3:  # Increased from 0.2 to 0.3
+                
+                # Additional checks to avoid false positives:
+                
+                # 1. Skip if single author papers (common name variations)
+                if len(ref_authors) <= 1 or len(paper_authors) <= 1:
+                    continue
+                
+                # 2. Check if this is a well-known/established paper (multiple database matches)
+                database_sources = set(r.get('source', 'unknown') for r in search_results)
+                if len(database_sources) >= 3:  # Found in 3+ databases = likely legitimate
+                    continue
+                
+                # 3. Check for different levels of author manipulation
+                if author_sim < 0.1:  # Almost completely different authors
+                    fraud_type = "severe_author_manipulation"
+                    confidence = 0.9 + self.fraud_confidence_boost
+                elif author_sim < 0.2:  # Significantly different authors  
+                    fraud_type = "author_manipulation"
+                    confidence = 0.85 + self.fraud_confidence_boost
+                else:  # Moderately different authors
+                    fraud_type = "possible_author_manipulation" 
+                    confidence = 0.75 + self.fraud_confidence_boost
+                    
+                # Enhanced verification with CryptoDB for crypto papers
+                cryptodb_details = {}
+                if self.cryptodb_client:
+                    venue = paper.get('venue', '')
+                    enhancement = self.cryptodb_client.enhance_author_comparison(
+                        ref_authors,
+                        paper_authors,
+                        venue
+                    )
+                    cryptodb_details = enhancement
+                    
+                    # If CryptoDB confirms legitimate authors, skip fraud detection
+                    if enhancement.get('legitimate_match', False):
+                        continue
+                
+                return VerificationResult(
+                    classification=ClassificationResult.AUTHOR_MANIPULATION,
+                    confidence=confidence,
+                    similarity_score=title_sim,
+                    matched_paper=paper,
+                    reasons=[
+                        f"Title matches existing paper with {title_sim:.2f} similarity (threshold: {self.author_manipulation_threshold:.2f})",
+                        f"But authors are significantly different (similarity: {author_sim:.2f})",
+                        "This suggests deliberate author manipulation fraud"
+                    ],
+                    details={
+                        "fraud_type": fraud_type,
+                        "title_similarity": title_sim,
+                        "author_similarity": author_sim,
+                        "original_authors": paper_authors,
+                        "claimed_authors": ref_authors,
+                        "cryptodb_verification": cryptodb_details,
+                        "threshold_used": self.author_manipulation_threshold
+                    }
+                )
+        
+        return None
+    
+    def _validate_across_databases(self, extracted_ref: Dict[str, Any], search_results: List[Dict[str, Any]], 
+                                  best_match: Optional[Dict[str, Any]], best_score: float) -> Optional[VerificationResult]:
+        """
+        SLIGHTLY PESSIMISTIC validation - multiple databases preferred for high scores
+        
+        Args:
+            extracted_ref: Reference from document  
+            search_results: All search results
+            best_match: Best matching paper
+            best_score: Best similarity score
+            
+        Returns:
+            VerificationResult if specific validation needed, None for standard processing
+        """
+        # Count unique databases that returned results
+        databases = set(r.get('source', 'unknown') for r in search_results)
+        num_databases = len(databases)
+        
+        # For high similarity scores, prefer multiple database confirmation
+        if best_score > 0.75 and num_databases == 1:  # Lowered threshold from 0.8
+            return VerificationResult(
+                classification=ClassificationResult.SUSPICIOUS,
+                confidence=0.65,  # Reduced confidence
+                similarity_score=best_score,
+                matched_paper=best_match,
+                reasons=[
+                    f"High similarity but found in only {num_databases} database: {', '.join(databases)}",
+                    "Single-database high matches warrant additional verification",
+                    "Legitimate papers typically appear in multiple databases"
+                ],
+                details={
+                    "databases_found": list(databases),
+                    "database_count": num_databases,
+                    "validation_level": "single_database_high_similarity_concern"
+                }
+            )
+        
+        return None
+    
+    def _determine_enhanced_classification(self, extracted_ref: Dict[str, Any], 
+                                          best_match: Optional[Dict[str, Any]], 
+                                          similarity_score: float,
+                                          search_results: List[Dict[str, Any]]) -> Tuple[ClassificationResult, float, List[str]]:
+        """
+        CONFIGURABLE classification using rigor level and advanced settings
+        
+        Args:
+            extracted_ref: Reference from document
+            best_match: Best matching paper
+            similarity_score: Overall similarity score  
+            search_results: All search results
+            
+        Returns:
+            Tuple of (classification, confidence, reasons)
+        """
+        reasons = []
+        databases = set(r.get('source', 'unknown') for r in search_results)
+        num_databases = len(databases)
+        
+        # Authentic classification using configurable threshold
+        if similarity_score >= self.similarity_threshold:
+            confidence = min(0.95, similarity_score + self.authentic_confidence_boost)
+            reasons.append(f"High similarity score ({similarity_score:.2f}) above threshold ({self.similarity_threshold:.2f})")
+            
+            # Multiple database presence adds confidence
+            if num_databases >= 2:
+                reasons.append(f"Verified in {num_databases} databases: {', '.join(databases)}")
+                confidence += 0.05
+            else:
+                reasons.append(f"Found in {num_databases} database: {', '.join(databases)}")
+                if self.multi_database_requirement:
+                    confidence -= self.single_database_penalty * 2  # Double penalty if multi-DB required
+                    reasons.append("Single database presence reduces confidence (multi-DB verification preferred)")
+                else:
+                    confidence -= self.single_database_penalty  # Standard penalty
+                
+            if best_match:
+                if best_match.get('citationCount', 0) > 0:
+                    reasons.append("Paper has citations in database")
+                    confidence += 0.03
+                
+                if best_match.get('doi'):
+                    reasons.append("Paper has DOI")
+                    confidence += 0.02
+            
+            return ClassificationResult.AUTHENTIC, min(0.99, confidence), reasons
+        
+        # Medium similarity - use configurable suspicious threshold
+        elif similarity_score >= self.suspicious_threshold:
+            confidence = similarity_score * 0.75
+            reasons.append(f"Medium similarity score ({similarity_score:.2f})")
+            reasons.append("Reference partially matches known papers but lacks strong verification")
+            
+            if num_databases >= 2:
+                reasons.append("Found in multiple databases")
+                confidence += 0.05
+            else:
+                reasons.append("Limited database coverage raises some concerns")
+                confidence -= self.single_database_penalty
+                
+            return ClassificationResult.SUSPICIOUS, confidence, reasons
+        
+        # Low similarity - likely fabricated or fake
+        elif similarity_score > self.inconclusive_threshold:
+            confidence = 0.7 + self.fraud_confidence_boost
+            reasons.append(f"Low similarity score ({similarity_score:.2f})")
+            
+            # Check if this appears to be completely made up
+            if similarity_score < 0.1:
+                reasons.append("Extremely low similarity suggests fabricated reference")
+                return ClassificationResult.FABRICATED, confidence, reasons
+            else:
+                reasons.append("Searched across {} databases but found no strong matches".format(num_databases))
+                return ClassificationResult.FABRICATED, confidence, reasons
+            
+        # Very low or no similarity - clearly fabricated
+        else:
+            if not best_match:
+                reasons.append("No similar papers found in any database")
+                reasons.append("Complete absence from academic databases strongly suggests fabrication")
+                return ClassificationResult.FABRICATED, 0.8 + self.fraud_confidence_boost, reasons
+            else:
+                confidence = 0.75 + self.fraud_confidence_boost
+                reasons.append("Very low similarity to known papers")
+                reasons.append("No meaningful similarity to any papers in academic databases")
+                reasons.append(f"Comprehensive search across {num_databases} databases found no matches")
+                reasons.append("Reference appears to be fabricated")
+                return ClassificationResult.FABRICATED, confidence, reasons
+            
+            return ClassificationResult.FABRICATED, confidence, reasons
+    
+    def _assess_overall_risk(self, authentic_pct: float, fake_pct: float, suspicious_pct: float, fraud_pct: float) -> str:
+        """Assess overall risk level based on classification percentages including new fraud types"""
+        if fraud_pct > 15 or fake_pct > 20:
+            return "🚨 CRITICAL - Significant fraud detected (author manipulation or fabrication)"
+        elif fraud_pct > 5 or fake_pct > 10 or suspicious_pct > 30:
+            return "🔴 HIGH - Notable fraud or suspicious references detected"
+        elif fraud_pct > 0 or fake_pct > 5 or suspicious_pct > 15:
+            return "🟡 MEDIUM - Some concerning references require investigation"
+        elif suspicious_pct > 5:
+            return "🟢 LOW - Minor concerns with some references"
+        else:
+            return "✅ MINIMAL - References appear authentic with rigorous verification"
+    
+    def _incorporate_ai_analysis(self, 
+                                classification: ClassificationResult,
+                                confidence: float,
+                                reasons: List[str],
+                                ai_verification) -> Tuple[ClassificationResult, float, List[str]]:
+        """
+        Incorporate AI verification results into the final classification
+        SLIGHTLY PESSIMISTIC approach - AI provides valuable fraud detection insight
+        
+        Args:
+            classification: Current classification result
+            confidence: Current confidence score
+            reasons: Current list of reasons
+            ai_verification: AI verification result
+            
+        Returns:
+            Updated classification, confidence, and reasons
+        """
+        if not ai_verification:
+            return classification, confidence, reasons
+        
+        # Weight for AI analysis - increased slightly to catch fraud
+        ai_weight = min(0.2, self.ai_verifier.get_verification_weight() if self.ai_verifier else 0.2)
+        traditional_weight = 1.0 - ai_weight
+        
+        # Map AI authenticity to our classification system
+        if ai_verification.is_authentic:
+            ai_classification = ClassificationResult.AUTHENTIC
+        else:
+            # Use AI's red flags to determine specific classification
+            red_flags = [flag.lower() for flag in ai_verification.red_flags]
+            if any('author' in flag for flag in red_flags):
+                ai_classification = ClassificationResult.AUTHOR_MANIPULATION
+            elif any('fabricat' in flag or 'fake' in flag for flag in red_flags):
+                ai_classification = ClassificationResult.FABRICATED
+            else:
+                ai_classification = ClassificationResult.SUSPICIOUS
+        
+        # SLIGHTLY PESSIMISTIC combination - give AI fraud detection more weight
+        if classification == ai_classification:
+            # Both agree - good confidence boost
+            new_confidence = min(1.0, confidence + 0.07)  # Slightly increased
+            new_reasons = reasons + [f"AI analysis confirms: {ai_verification.reasoning[:80]}..."]
+        elif classification == ClassificationResult.AUTHENTIC and ai_classification != ClassificationResult.AUTHENTIC:
+            # Traditional says authentic, AI disagrees - take AI concerns seriously
+            if ai_verification.confidence > 0.7 and len(ai_verification.red_flags) >= 1:  # Lowered threshold
+                # AI has reasonable concerns - be more responsive
+                new_classification = ai_classification if ai_verification.confidence > 0.8 else ClassificationResult.SUSPICIOUS
+                new_confidence = traditional_weight * confidence * 0.7 + ai_weight * (1 - ai_verification.confidence * 0.3)
+                new_reasons = reasons + [f"AI raised concerns: {', '.join(ai_verification.red_flags[:2])}"]
+            else:
+                # Keep authentic but note AI concerns
+                new_classification = ClassificationResult.SUSPICIOUS  # More cautious default
+                new_confidence = confidence * 0.9
+                new_reasons = reasons + ["AI suggests caution warranted"]
+        elif classification != ClassificationResult.AUTHENTIC and ai_classification == ClassificationResult.AUTHENTIC:
+            # Traditional says problematic, AI says authentic - moderate slightly
+            if ai_verification.confidence > 0.75:  # Raised threshold for AI override
+                # AI suggests legitimacy - moderate the negative classification
+                if classification == ClassificationResult.FABRICATED:
+                    new_classification = ClassificationResult.SUSPICIOUS
+                elif classification == ClassificationResult.AUTHOR_MANIPULATION:
+                    new_classification = ClassificationResult.SUSPICIOUS  # Stay cautious
+                else:
+                    new_classification = classification  # Keep suspicious as is
+                
+                new_confidence = traditional_weight * confidence * 0.85 + ai_weight * ai_verification.confidence
+                new_reasons = reasons + [f"AI suggests legitimacy: {ai_verification.reasoning[:70]}..."]
+            else:
+                new_classification = classification
+                new_confidence = confidence
+                new_reasons = reasons + ["AI analysis inconclusive"]
+        else:
+            # Both problematic but different types - trust traditional methods more
+            new_classification = classification  # Keep traditional classification
+            new_confidence = traditional_weight * confidence + ai_weight * ai_verification.confidence * 0.7
+            new_reasons = reasons + [f"AI provides context: {ai_verification.reasoning[:60]}..."]
+        
+        # Add positive indicators when present
+        if ai_verification.positive_indicators:
+            new_reasons.append(f"AI positive indicators: {', '.join(ai_verification.positive_indicators[:2])}")
+        
+        return (new_classification if 'new_classification' in locals() else classification,
+                new_confidence if 'new_confidence' in locals() else confidence,
+                new_reasons if 'new_reasons' in locals() else reasons)
