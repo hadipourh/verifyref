@@ -221,14 +221,12 @@ class ReferenceClassifier:
         Returns:
             Tuple of (best_match_paper, similarity_score)
         """
-        best_match = None
-        best_score = 0.0
-        
-        for paper in search_results:
-            score = self._calculate_overall_similarity(extracted_ref, paper)
-            if score > best_score:
-                best_score = score
-                best_match = paper
+        if not search_results:
+            return None, 0.0
+            
+        # Use max to find best match in one line
+        best_match = max(search_results, key=lambda paper: self._calculate_overall_similarity(extracted_ref, paper))
+        best_score = self._calculate_overall_similarity(extracted_ref, best_match)
         
         return best_match, best_score
     
@@ -514,24 +512,18 @@ class ReferenceClassifier:
                 1 for r in results if r.classification == classification
             )
         
-        # Calculate statistics
-        authentic_count = classification_counts[ClassificationResult.AUTHENTIC.value]
-        suspicious_count = classification_counts[ClassificationResult.SUSPICIOUS.value]
-        fake_count = classification_counts[ClassificationResult.FAKE.value]
-        author_manipulation_count = classification_counts[ClassificationResult.AUTHOR_MANIPULATION.value]
-        fabricated_count = classification_counts[ClassificationResult.FABRICATED.value]
-        inconclusive_count = classification_counts[ClassificationResult.INCONCLUSIVE.value]
+        # Calculate percentages more efficiently
+        def calculate_percentage(count):
+            return round((count / total_refs) * 100, 1)
         
-        # Calculate percentages
-        authentic_pct = (authentic_count / total_refs) * 100
-        suspicious_pct = (suspicious_count / total_refs) * 100
-        fake_pct = (fake_count / total_refs) * 100
-        author_manipulation_pct = (author_manipulation_count / total_refs) * 100
-        fabricated_pct = (fabricated_count / total_refs) * 100
-        inconclusive_pct = (inconclusive_count / total_refs) * 100
+        percentages = {
+            classification.value: calculate_percentage(classification_counts[classification.value])
+            for classification in ClassificationResult
+        }
         
         # Calculate fraud percentage (author manipulation + fabricated)
-        fraud_pct = author_manipulation_pct + fabricated_pct
+        fraud_pct = percentages["author_manipulation"] + percentages["fabricated"]
+        percentages["total_fraud"] = round(fraud_pct, 1)
         
         # Calculate average similarity and confidence
         avg_similarity = sum(r.similarity_score for r in results) / total_refs
@@ -540,22 +532,19 @@ class ReferenceClassifier:
         return {
             "total_references": total_refs,
             "classification_counts": classification_counts,
-            "percentages": {
-                "authentic": round(authentic_pct, 1),
-                "suspicious": round(suspicious_pct, 1),
-                "fake": round(fake_pct, 1),
-                "author_manipulation": round(author_manipulation_pct, 1),
-                "fabricated": round(fabricated_pct, 1),
-                "inconclusive": round(inconclusive_pct, 1),
-                "total_fraud": round(fraud_pct, 1)  # Combined fraud percentage
-            },
+            "percentages": percentages,
             "statistics": {
                 "average_similarity_score": round(avg_similarity, 3),
                 "average_confidence": round(avg_confidence, 3),
                 "high_confidence_results": sum(1 for r in results if r.confidence > 0.8),
                 "verified_with_matches": sum(1 for r in results if r.matched_paper is not None)
             },
-            "risk_assessment": self._assess_overall_risk(authentic_pct, fake_pct, suspicious_pct, fraud_pct)
+            "risk_assessment": self._assess_overall_risk(
+                percentages["authentic"], 
+                percentages["fake"], 
+                percentages["suspicious"], 
+                percentages["total_fraud"]
+            )
         }
     
     def _detect_fraud(self, extracted_ref: Dict[str, Any], search_results: List[Dict[str, Any]]) -> Optional[VerificationResult]:
@@ -665,8 +654,13 @@ class ReferenceClassifier:
         databases = set(r.get('source', 'unknown') for r in search_results)
         num_databases = len(databases)
         
+        # Authoritative databases that are sufficient on their own for high-quality matches
+        authoritative_databases = {'dblp', 'pubmed', 'ieee', 'acm', 'springer'}
+        found_authoritative = databases.intersection(authoritative_databases)
+        
         # For high similarity scores, prefer multiple database confirmation
-        if best_score > 0.75 and num_databases == 1:  # Lowered threshold from 0.8
+        # But only flag as suspicious if similarity is not overwhelming AND not in authoritative database
+        if best_score > 0.75 and best_score < 0.85 and num_databases == 1 and not found_authoritative:
             return VerificationResult(
                 classification=ClassificationResult.SUSPICIOUS,
                 confidence=0.65,  # Reduced confidence
@@ -674,13 +668,14 @@ class ReferenceClassifier:
                 matched_paper=best_match,
                 reasons=[
                     f"High similarity but found in only {num_databases} database: {', '.join(databases)}",
-                    "Single-database high matches warrant additional verification",
-                    "Legitimate papers typically appear in multiple databases"
+                    "Single-database moderate matches warrant additional verification",
+                    "Very high similarity (>85%) or authoritative databases would override this concern"
                 ],
                 details={
                     "databases_found": list(databases),
                     "database_count": num_databases,
-                    "validation_level": "single_database_high_similarity_concern"
+                    "authoritative_databases_found": list(found_authoritative),
+                    "validation_level": "single_database_moderate_similarity_concern"
                 }
             )
         

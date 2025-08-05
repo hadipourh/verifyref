@@ -274,7 +274,7 @@ def determine_output_format(output_file: str, output_format: str = None) -> str:
     # Default to JSON
     return 'json'
 
-def generate_human_readable_report(results: Dict[str, Any]) -> str:
+def generate_human_readable_report(results: Dict[str, Any], classifier=None) -> str:
     """Generate a human-readable text report with enhanced formatting"""
     report_lines = []
     
@@ -362,6 +362,13 @@ def generate_human_readable_report(results: Dict[str, Any]) -> str:
             report_lines.append("🔍 DATABASE VERIFICATION RESULTS:")
             report_lines.append("-" * 60)
             
+            # Use provided classifier or create one if none provided
+            if classifier is None:
+                from verifier.classifier import ReferenceClassifier
+                temp_classifier = ReferenceClassifier()
+            else:
+                temp_classifier = classifier
+            
             for db_name, db_results in verification_results.items():
                 if isinstance(db_results, list) and db_results:
                     report_lines.append(f"📚 {db_name.upper()}:")
@@ -372,7 +379,9 @@ def generate_human_readable_report(results: Dict[str, Any]) -> str:
                             result_title = result.get('title', 'Unknown')
                             result_authors = result.get('authors', [])
                             result_year = result.get('year', 'Unknown')
-                            similarity = result.get('similarity_score', 0)
+                            
+                            # Calculate similarity for display
+                            similarity = temp_classifier._calculate_overall_similarity(parsed, result) * 100
                             
                             report_lines.append(f"  {i}. {result_title}")
                             if result_authors:
@@ -444,7 +453,7 @@ def generate_human_readable_report(results: Dict[str, Any]) -> str:
     
     return "\n".join(report_lines)
 
-def save_results(results: Dict[str, Any], output_file: str, output_format: str):
+def save_results(results: Dict[str, Any], output_file: str, output_format: str, classifier=None):
     """Save results in the specified format"""
     try:
         if output_format == 'json':
@@ -455,7 +464,7 @@ def save_results(results: Dict[str, Any], output_file: str, output_format: str):
         
         elif output_format == 'txt':
             # Generate human-readable report
-            report = generate_human_readable_report(results)
+            report = generate_human_readable_report(results, classifier)
             with open(output_file, 'w', encoding='utf-8') as f:
                 f.write(report)
         
@@ -525,6 +534,21 @@ def verify_references(pdf_path: str, output_file: str = None, output_format: str
     console.print(f"[blue]🔍 Starting verification of {len(references)} references...[/blue]")
     
     # Define processing function for parallel execution
+    def create_error_result(index, ref, error_reason):
+        """Helper to create consistent error results"""
+        from verifier.classifier import VerificationResult, ClassificationResult
+        error_result = VerificationResult(
+            classification=ClassificationResult.INCONCLUSIVE,
+            confidence=0.0, similarity_score=0.0, matched_paper=None,
+            reasons=[error_reason]
+        )
+        return {
+            'index': index, 'original': ref, 'parsed': None,
+            'classification_result': error_result,
+            'classification': 'inconclusive', 'confidence': 0.0,
+            'details': error_reason
+        }
+    
     def process_single_reference(ref_tuple):
         """Process a single reference in parallel"""
         i, ref = ref_tuple
@@ -535,37 +559,15 @@ def verify_references(pdf_path: str, output_file: str = None, output_format: str
                 parsed_ref = parser.parse_single_reference(ref, i)
             else:
                 # Pre-create dict format for parser (avoid repeated string operations)
-                ref_str = str(ref)
                 ref_dict = {
-                    'raw_text': ref_str,
-                    'title': '',
-                    'authors': [],
-                    'venue': '',
-                    'year': None,
-                    'volume': '',
-                    'issue': '',
-                    'pages': '',
-                    'doi': '',
-                    'isbn': '',
-                    'url': ''
+                    'raw_text': str(ref), 'title': '', 'authors': [], 'venue': '',
+                    'year': None, 'volume': '', 'issue': '', 'pages': '', 'doi': '', 'isbn': '', 'url': ''
                 }
                 parsed_ref = parser.parse_single_reference(ref_dict, i)
             
-            # Validate parsed reference (optimized validation)
+            # Validate parsed reference
             if not (parsed_ref and isinstance(parsed_ref, dict) and parsed_ref.get('title')):
-                from verifier.classifier import VerificationResult, ClassificationResult
-                parse_error_result = VerificationResult(
-                    classification=ClassificationResult.INCONCLUSIVE,
-                    confidence=0.0, similarity_score=0.0, matched_paper=None,
-                    reasons=['Failed to parse reference']
-                )
-                
-                return {
-                    'index': i, 'original': ref, 'parsed': parsed_ref,
-                    'classification_result': parse_error_result,
-                    'classification': 'inconclusive', 'confidence': 0.0,
-                    'details': 'Failed to parse reference'
-                }
+                return create_error_result(i, ref, 'Failed to parse reference')
             
             # Verify against databases with caching
             verification_results = cached_database_search(verifier, parsed_ref, False)  # Non-verbose for parallel
@@ -580,9 +582,7 @@ def verify_references(pdf_path: str, output_file: str = None, output_format: str
             classification = classifier.classify_reference(parsed_ref, flattened_results)
             
             return {
-                'index': i,
-                'original': ref,
-                'parsed': parsed_ref,
+                'index': i, 'original': ref, 'parsed': parsed_ref,
                 'verification_results': verification_results,
                 'classification_result': classification,
                 'classification': classification.classification.value,
@@ -591,20 +591,7 @@ def verify_references(pdf_path: str, output_file: str = None, output_format: str
             }
             
         except Exception as e:
-            error_msg = str(e)
-            from verifier.classifier import VerificationResult, ClassificationResult
-            error_result = VerificationResult(
-                classification=ClassificationResult.INCONCLUSIVE,
-                confidence=0.0, similarity_score=0.0, matched_paper=None,
-                reasons=[f'Processing error: {error_msg}']
-            )
-            
-            return {
-                'index': i, 'original': ref, 'parsed': None,
-                'classification_result': error_result,
-                'classification': 'inconclusive', 'confidence': 0.0,
-                'details': f'Processing error: {error_msg}'
-            }
+            return create_error_result(i, ref, f'Processing error: {str(e)}')
     
     # Use parallel processing for better performance
     max_workers = min(4, len(references))  # Limit to 4 threads to avoid overwhelming APIs
@@ -810,10 +797,10 @@ def verify_references(pdf_path: str, output_file: str = None, output_format: str
     if output_file:
         # Determine output format
         format_to_use = determine_output_format(output_file, output_format)
-        save_results(results, output_file, format_to_use)
+        save_results(results, output_file, format_to_use, classifier)
     else:
         # Generate human-readable report for console output
-        report = generate_human_readable_report(results)
+        report = generate_human_readable_report(results, classifier)
         console.print("\n" + "="*80)
         console.print(report)
 
@@ -1215,29 +1202,8 @@ def search_and_cite(query: str, context: str = "general", output_file: str = Non
 
 def clean_author_name(author_name: str) -> str:
     """Clean author names by removing database disambiguation numbers"""
-    import re
-    
-    if not author_name:
-        return author_name
-    
-    # Remove database disambiguation patterns iteratively
-    # Common patterns: " 0001", " 0002", etc. (spaced) or "Name0001" (no space)
-    # Only remove 4-digit numbers that are likely disambiguation (0001-0999, not years like 1985)
-    cleaned = str(author_name).strip()
-    
-    # Keep removing disambiguation patterns until none are found
-    while True:
-        before_clean = cleaned
-        cleaned = re.sub(r'\s+0\d{3}$', '', cleaned)  # " 0001" to " 0999"
-        cleaned = re.sub(r'(\w)0\d{3}$', r'\1', cleaned)  # "Name0001" to "Name0999"
-        if cleaned == before_clean:
-            break
-    
-    # Remove other common database artifacts
-    cleaned = re.sub(r'\s+\(\d+\)$', '', cleaned)  # Remove (1), (2), etc.
-    cleaned = re.sub(r'\s+\[\d+\]$', '', cleaned)  # Remove [1], [2], etc.
-    
-    return cleaned.strip()
+    from utils.academic_matching import clean_author_name as clean_name
+    return clean_name(author_name)
 
 def generate_bibtex(paper: dict, key: str) -> str:
     """Generate comprehensive BibTeX entry for a paper with optimized string handling"""
@@ -1423,82 +1389,32 @@ Examples:
     
     # Main command group
     group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("file", nargs='?', type=str, help="Path to PDF file to analyze for reference verification")
+    group.add_argument("--cite", type=str, help="Search for a paper by title/keywords and generate BibTeX citation")
     
-    group.add_argument(
-        "file", 
-        nargs='?',
-        type=str, 
-        help="Path to PDF file to analyze for reference verification"
-    )
+    # Optional arguments - using more concise definitions
+    args_config = [
+        ("--context", "-c", {"choices": ["computer-science", "cs", "biomedical", "bio", "general"], "default": "general", 
+         "help": "Research context for citation search"}),
+        ("--output", "-o", {"help": "Output file for results (format determined by extension: .json, .txt)"}),
+        ("--output-format", "-f", {"choices": ["json", "txt"], "help": "Output format (default: auto-detect from file extension)"}),
+        ("--verbose", "-v", {"action": "store_true", "help": "Enable verbose output"}),
+        ("--rigor", "-r", {"choices": ["strict", "balanced", "lenient"], "default": "balanced", 
+         "help": "Verification rigor level"}),
+        ("--similarity-threshold", None, {"type": float, "metavar": "0.0-1.0", 
+         "help": "Override similarity threshold for authentic classification"}),
+        ("--enable-ai", None, {"action": "store_true", "help": "Enable AI-powered verification (requires OpenAI API key)"}),
+        ("--disable-fraud-detection", None, {"action": "store_true", "help": "Disable enhanced fraud detection"}),
+        ("--require-multi-db", None, {"action": "store_true", 
+         "help": "Require papers to be found in multiple databases for high confidence"})
+    ]
     
-    group.add_argument(
-        "--cite", 
-        type=str,
-        help="Search for a paper by title/keywords and generate BibTeX citation"
-    )
-    
-    # Optional arguments
-    parser.add_argument(
-        "--context", "-c",
-        type=str,
-        choices=["computer-science", "cs", "biomedical", "bio", "general"],
-        default="general",
-        help="Research context for citation search: computer-science/cs (prioritizes CS databases), biomedical/bio (prioritizes medical databases), general (searches all databases equally)"
-    )
-    
-    parser.add_argument(
-        "--output", "-o",
-        type=str,
-        help="Output file for results (format determined by extension: .json, .txt)"
-    )
-    
-    parser.add_argument(
-        "--output-format", "-f",
-        type=str,
-        choices=["json", "txt"],
-        help="Output format (default: auto-detect from file extension)"
-    )
-    
-    parser.add_argument(
-        "--verbose", "-v",
-        action="store_true",
-        help="Enable verbose output"
-    )
-    
-    # Rigor level control
-    parser.add_argument(
-        "--rigor", "-r",
-        type=str,
-        choices=["strict", "balanced", "lenient"],
-        default="balanced",
-        help="Verification rigor level: strict (more false positives, catches fraud), balanced (default), lenient (fewer false positives, may miss some fraud)"
-    )
-    
-    # Advanced configuration overrides
-    parser.add_argument(
-        "--similarity-threshold",
-        type=float,
-        metavar="0.0-1.0",
-        help="Override similarity threshold for authentic classification (0.0-1.0)"
-    )
-    
-    parser.add_argument(
-        "--enable-ai",
-        action="store_true",
-        help="Enable AI-powered verification (requires OpenAI API key, disabled by default)"
-    )
-    
-    parser.add_argument(
-        "--disable-fraud-detection",
-        action="store_true", 
-        help="Disable enhanced fraud detection"
-    )
-    
-    parser.add_argument(
-        "--require-multi-db",
-        action="store_true",
-        help="Require papers to be found in multiple databases for high confidence"
-    )
+    # Add all arguments using loop
+    for arg_name, short_name, config in args_config:
+        if short_name:
+            parser.add_argument(arg_name, short_name, **config)
+        else:
+            parser.add_argument(arg_name, **config)
     
     args = parser.parse_args()
     

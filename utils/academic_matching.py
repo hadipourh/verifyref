@@ -154,6 +154,28 @@ def calculate_venue_similarity(venue1: str, venue2: str) -> float:
     
     return min(1.0, jaccard)
 
+def clean_author_name(author: str) -> str:
+    """
+    Clean author name by removing database disambiguation artifacts
+    
+    Args:
+        author: Original author name
+        
+    Returns:
+        Cleaned author name
+    """
+    if not author:
+        return author
+    
+    cleaned = str(author).strip()
+    
+    # Remove all common database artifacts in one pass
+    cleaned = re.sub(r'(\s+|(?<=\w))0\d{3}$', '', cleaned)  # " 0001" or "Name0001"
+    cleaned = re.sub(r'\s+\(\d+\)$', '', cleaned)           # " (1)", " (2)"
+    cleaned = re.sub(r'\s+\[\d+\]$', '', cleaned)           # " [1]", " [2]"
+    
+    return cleaned.strip()
+
 def normalize_author_name(author: str) -> str:
     """
     Normalize author name for better matching
@@ -168,41 +190,23 @@ def normalize_author_name(author: str) -> str:
     if not author:
         return ""
     
-    # First, clean database disambiguation numbers (before lowercasing)
-    # Remove database disambiguation patterns iteratively
-    # Common patterns: " 0001", " 0002", etc. (spaced) or "Name0001" (no space)
-    # Only remove 4-digit numbers that are likely disambiguation (0001-0999, not years like 1985)
-    cleaned = str(author).strip()
+    # Clean database disambiguation artifacts in one pass
+    cleaned = clean_author_name(author)
     
-    # Keep removing disambiguation patterns until none are found
-    while True:
-        before_clean = cleaned
-        cleaned = re.sub(r'\s+0\d{3}$', '', cleaned)  # " 0001" to " 0999"
-        cleaned = re.sub(r'(\w)0\d{3}$', r'\1', cleaned)  # "Name0001" to "Name0999"
-        if cleaned == before_clean:
-            break
-    
-    # Remove other common database artifacts
-    cleaned = re.sub(r'\s+\(\d+\)$', '', cleaned)  # Remove (1), (2), etc.
-    cleaned = re.sub(r'\s+\[\d+\]$', '', cleaned)  # Remove [1], [2], etc.
-    
-    # Remove extra whitespace and convert to lowercase
+    # Normalize whitespace and convert to lowercase
     normalized = re.sub(r'\s+', ' ', cleaned.lower().strip())
     
-    # Handle different name formats
-    # "Last, First Middle" -> "first middle last"
+    # Handle "Last, First" format
     if ',' in normalized:
         parts = normalized.split(',', 1)
         if len(parts) == 2:
-            last_name = parts[0].strip()
-            first_names = parts[1].strip()
-            normalized = f"{first_names} {last_name}"
+            normalized = f"{parts[1].strip()} {parts[0].strip()}"
     
-    # Remove common prefixes/suffixes
+    # Remove titles and suffixes
     normalized = re.sub(r'\b(dr|prof|professor)\.\s*', '', normalized)
     normalized = re.sub(r'\s+(jr|sr|ii|iii)\.?$', '', normalized)
     
-    # Handle initials - convert "J. Smith" to "j smith"
+    # Convert "j. smith" to "j smith"
     normalized = re.sub(r'\b([a-z])\.\s*', r'\1 ', normalized)
     
     return normalized.strip()
@@ -221,37 +225,55 @@ def calculate_author_similarity(authors1: List[str], authors2: List[str]) -> flo
     if not authors1 or not authors2:
         return 0.0
     
-    norm_authors1 = [normalize_author_name(a) for a in authors1]
-    norm_authors2 = [normalize_author_name(a) for a in authors2]
-    
-    # Remove empty names
-    norm_authors1 = [a for a in norm_authors1 if a]
-    norm_authors2 = [a for a in norm_authors2 if a]
+    norm_authors1 = [normalize_author_name(a) for a in authors1 if a]
+    norm_authors2 = [normalize_author_name(a) for a in authors2 if a]
     
     if not norm_authors1 or not norm_authors2:
         return 0.0
     
-    # Find best matches between authors
-    matches = 0
-    total_comparisons = max(len(norm_authors1), len(norm_authors2))
+    def get_author_match_score(author1, author2):
+        """Get similarity score between two authors with improved initial handling"""
+        if author1 == author2:
+            return 1.0
+        elif author1 in author2 or author2 in author1:
+            return 0.8
+        else:
+            words1, words2 = author1.split(), author2.split()
+            if not words1 or not words2:
+                return 0.0
+            
+            # Check if last names match
+            if words1[-1] == words2[-1]:
+                # Same last name - check first names/initials
+                if len(words1) >= 1 and len(words2) >= 1:
+                    first1, first2 = words1[0], words2[0]
+                    
+                    # Handle initial vs full name matching
+                    if len(first1) == 1 and len(first2) > 1:
+                        # first1 is initial, first2 is full name
+                        if first2.startswith(first1):
+                            return 0.9  # High score for initial match
+                    elif len(first2) == 1 and len(first1) > 1:
+                        # first2 is initial, first1 is full name
+                        if first1.startswith(first2):
+                            return 0.9  # High score for initial match
+                    elif first1 == first2:
+                        return 0.8  # Exact first name match
+                
+                return 0.6  # Same last name, different first names
+            
+            # Check for partial matches in multi-part names
+            overlap = len(set(words1).intersection(set(words2)))
+            if overlap > 0:
+                total_words = len(set(words1).union(set(words2)))
+                return 0.3 + (overlap / total_words) * 0.4  # 0.3-0.7 range
+                
+        return 0.0
     
-    for author1 in norm_authors1:
-        best_match = 0.0
-        for author2 in norm_authors2:
-            # Check if names are similar
-            if author1 == author2:
-                best_match = 1.0
-                break
-            elif author1 in author2 or author2 in author1:
-                best_match = max(best_match, 0.8)
-            else:
-                # Check if last names match (common in academic citations)
-                words1 = author1.split()
-                words2 = author2.split()
-                if words1 and words2 and words1[-1] == words2[-1]:
-                    best_match = max(best_match, 0.6)
-        
-        if best_match > 0.5:
-            matches += best_match
+    # Find best matches using list comprehension and max
+    matches = sum(
+        max((get_author_match_score(author1, author2) for author2 in norm_authors2), default=0.0)
+        for author1 in norm_authors1
+    )
     
-    return matches / total_comparisons
+    return matches / max(len(norm_authors1), len(norm_authors2))
