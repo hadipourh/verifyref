@@ -39,13 +39,15 @@ VerifyRef follows strict ethical practices for academic API usage and reference 
 
 ## Required Configuration
 
-```bash
+Edit `config.py` to set:
+```python
 # Required for CrossRef API
-export CROSSREF_EMAIL="your-email@domain.com"
+CROSSREF_EMAIL = "your-email@domain.com"
 
-# Optional for enhanced limits/features
-export SEMANTIC_SCHOLAR_API_KEY="your-key"
-export OPENAI_API_KEY="your-key"  # AI features only
+# Optional for enhanced features
+SEMANTIC_SCHOLAR_API_KEY = "your-key"
+OPENAI_API_KEY = "your-key"  # AI features only
+NCBI_API_KEY = "your-key"    # Higher PubMed limits
 ```
 
 ## API Compliance

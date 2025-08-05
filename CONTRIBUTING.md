@@ -9,7 +9,7 @@ git clone https://github.com/user/verifyref.git
 cd verifyref
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt && pip install -e .
-cp .env.example .env  # Edit with your API keys
+# Edit config.py: Set CROSSREF_EMAIL and optional API keys
 ```
 
 ## Code Standards
