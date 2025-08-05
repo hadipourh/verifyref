@@ -114,11 +114,10 @@ class MultiDatabaseVerifier:
         """
         results = {}
         
-        with ThreadPoolExecutor() as executor:
-            # Submit search tasks
-            future_to_db = {}
-            
-            for db_name, client in self.clients.items():
+        # Sequential database search to avoid nested threading issues
+        # This ensures thread safety when called from parallel reference processing
+        for db_name, client in self.clients.items():
+            try:
                 if not client.is_available():
                     logger.warning(f"{db_name} service unavailable, skipping")
                     results[db_name] = []
@@ -131,29 +130,30 @@ class MultiDatabaseVerifier:
                 
                 # Use the client's search_paper method
                 if hasattr(client, 'search_paper'):
-                    future = executor.submit(
-                        client.search_paper,
+                    db_results = client.search_paper(
                         title=title,
                         authors=authors,
                         year=year,
                         venue=venue
                     )
-                    future_to_db[future] = db_name
                 else:
                     # Fallback to verify_reference for compatibility
-                    future = executor.submit(client.verify_reference, query_info)
-                    future_to_db[future] = db_name
-            
-            # Collect results
-            for future in as_completed(future_to_db):
-                db_name = future_to_db[future]
-                try:
-                    db_results = future.result()
-                    results[db_name] = db_results
-                    logger.info(f"{db_name} returned {len(db_results)} results")
-                except Exception as e:
-                    logger.error(f"Error searching {db_name}: {e}")
-                    results[db_name] = []
+                    db_results = client.verify_reference(query_info)
+                
+                results[db_name] = db_results
+                logger.info(f"{db_name} returned {len(db_results)} results")
+                
+                # Add small delay to respect API rate limits
+                if db_name == "semantic_scholar":
+                    time.sleep(1.0)  # Moderate delay for Semantic Scholar
+                elif db_name in ["pubmed", "crossref"]:
+                    time.sleep(0.5)  # Brief delay for rate-limited APIs
+                else:
+                    time.sleep(0.1)  # Minimal delay for other APIs
+                    
+            except Exception as e:
+                logger.error(f"Error searching {db_name}: {e}")
+                results[db_name] = []
         
         return results
     
@@ -333,33 +333,15 @@ class MultiDatabaseVerifier:
         """
         Search all databases in parallel for faster results
         
+        NOTE: This method is deprecated to avoid nested threading issues.
+        Use search_across_databases() instead which handles threading at the reference level.
+        
         Args:
             reference: Reference to verify
             
         Returns:
             Dictionary with results from each database
         """
-        results = {}
-        
-        def search_database(db_name, client):
-            try:
-                return db_name, client.verify_reference(reference)
-            except Exception as e:
-                logger.warning(f"Parallel search failed for {db_name}: {e}")
-                return db_name, []
-        
-        # Use ThreadPoolExecutor for parallel searches
-        with ThreadPoolExecutor(max_workers=len(self.clients)) as executor:
-            # Submit all search tasks
-            future_to_db = {
-                executor.submit(search_database, db_name, client): db_name 
-                for db_name, client in self.clients.items()
-            }
-            
-            # Collect results as they complete
-            for future in as_completed(future_to_db):
-                db_name, db_results = future.result()
-                results[db_name] = db_results
-                logger.info(f"Parallel search: {db_name} returned {len(db_results)} results")
-        
-        return results
+        # Redirect to sequential search to avoid nested threading
+        logger.warning("search_parallel() is deprecated, using sequential search to avoid threading conflicts")
+        return self.search_across_databases(reference)

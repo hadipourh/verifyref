@@ -115,7 +115,14 @@ def get_cache_key(parsed_ref: Dict[str, Any]) -> str:
     return f"{title}|{author_key}|{year}"
 
 def cached_database_search(verifier: MultiDatabaseVerifier, parsed_ref: Dict[str, Any], verbose: bool = False) -> Dict[str, List[Dict[str, Any]]]:
-    """Thread-safe database search with intelligent caching"""
+    """
+    Thread-safe database search with intelligent caching
+    
+    This function is designed to work with the parallel reference processing in verifyref.py.
+    The MultiDatabaseVerifier.search_across_databases() method now uses sequential database
+    searches to avoid nested ThreadPoolExecutor conflicts that caused inconsistent results
+    between verbose (-v) and parallel modes.
+    """
     global _search_cache, _cache_hits, _cache_misses, _cache_lock
     
     cache_key = get_cache_key(parsed_ref)

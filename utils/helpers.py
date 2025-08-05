@@ -174,8 +174,11 @@ def clean_author_name(name: str) -> str:
     name = normalize_text(name)
     
     # Remove common prefixes/suffixes
-    name = re.sub(r'^(Dr\.?|Prof\.?|Mr\.?|Ms\.?|Mrs\.?)\s+', '', name, flags=re.IGNORECASE)
+    name = re.sub(r'^(Dr\.?|Prof\.?|Mr\.?|Ms\.?|Mrs\.?)[ ]+', '', name, flags=re.IGNORECASE)
     name = re.sub(r'\s+(Jr\.?|Sr\.?|III?|IV)$', '', name, flags=re.IGNORECASE)
+    
+    # Remove DBLP-style numeric disambiguation suffixes (e.g., 'Kai Hu 0001' or 'Kai Hu 001' -> 'Kai Hu')
+    name = re.sub(r'\s+\d{3,4}$', '', name)
     
     # Remove extra punctuation
     name = re.sub(r'[^\w\s\.\-]', '', name)
