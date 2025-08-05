@@ -19,6 +19,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import requests
 import time
+import re
 import logging
 from typing import Dict, List, Optional, Any, Tuple
 from functools import lru_cache
@@ -64,8 +65,20 @@ class CryptoDBAuthorClient:
         if not self.enabled or not author_name or len(author_name.strip()) < 2:
             return None
         
-        # Clean the author name
+        # Clean the author name - remove database disambiguation artifacts
         clean_name = author_name.strip()
+        
+        # Remove database disambiguation patterns
+        # Common patterns: " 0001", " 0002", etc. (spaced) or "Name0001" (no space)
+        # Only remove 4-digit numbers that are likely disambiguation (0001-0999, not years like 1985)
+        clean_name = re.sub(r'\s+0\d{3}$', '', clean_name)  # " 0001" to " 0999"
+        clean_name = re.sub(r'(\w)0\d{3}$', r'\1', clean_name)  # "Name0001" to "Name0999"
+        
+        # Remove other common database artifacts
+        clean_name = re.sub(r'\s+\(\d+\)$', '', clean_name)  # Remove (1), (2), etc.
+        clean_name = re.sub(r'\s+\[\d+\]$', '', clean_name)  # Remove [1], [2], etc.
+        
+        clean_name = clean_name.strip()
         
         try:
             # Try multiple search strategies for better matching

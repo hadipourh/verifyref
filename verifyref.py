@@ -887,9 +887,19 @@ def apply_context_filtering(results: List[Dict[str, Any]], context_type: str, ve
         
         # Boost scores for CS-relevant results
         for paper in results:
-            source = paper.get('source', '').lower()
-            title = paper.get('title', '').lower()
-            venue = paper.get('venue', '').lower()
+            # Handle all fields being potentially lists or strings
+            source_raw = paper.get('source', '')
+            source = str(source_raw).lower() if not isinstance(source_raw, list) else ' '.join(str(s) for s in source_raw).lower()
+            
+            title_raw = paper.get('title', '')
+            title = str(title_raw).lower() if not isinstance(title_raw, list) else ' '.join(str(t) for t in title_raw).lower()
+            
+            # Handle venue being a list or string
+            venue_raw = paper.get('venue', '')
+            if isinstance(venue_raw, list):
+                venue = ' '.join(str(v) for v in venue_raw).lower()
+            else:
+                venue = str(venue_raw).lower()
             
             boost_score = 1.0
             
@@ -923,9 +933,19 @@ def apply_context_filtering(results: List[Dict[str, Any]], context_type: str, ve
         
         # Boost scores for biomedical-relevant results
         for paper in results:
-            source = paper.get('source', '').lower()
-            title = paper.get('title', '').lower()
-            venue = paper.get('venue', '').lower()
+            # Handle all fields being potentially lists or strings
+            source_raw = paper.get('source', '')
+            source = str(source_raw).lower() if not isinstance(source_raw, list) else ' '.join(str(s) for s in source_raw).lower()
+            
+            title_raw = paper.get('title', '')
+            title = str(title_raw).lower() if not isinstance(title_raw, list) else ' '.join(str(t) for t in title_raw).lower()
+            
+            # Handle venue being a list or string
+            venue_raw = paper.get('venue', '')
+            if isinstance(venue_raw, list):
+                venue = ' '.join(str(v) for v in venue_raw).lower()
+            else:
+                venue = str(venue_raw).lower()
             
             boost_score = 1.0
             
@@ -1129,22 +1149,29 @@ def search_and_cite(query: str, context: str = "general", output_file: str = Non
             venue = paper.get('venue', 'Unknown Venue')
             doi = paper.get('doi', '')
             
-            # Format authors efficiently
+            # Format authors efficiently with name cleaning
             if isinstance(authors, list) and authors:
-                if len(authors) == 1:
-                    author_str = authors[0]
-                elif len(authors) == 2:
-                    author_str = f"{authors[0]} and {authors[1]}"
+                cleaned_authors = [clean_author_name(author) for author in authors]
+                if len(cleaned_authors) == 1:
+                    author_str = cleaned_authors[0]
+                elif len(cleaned_authors) == 2:
+                    author_str = f"{cleaned_authors[0]} and {cleaned_authors[1]}"
                 else:
-                    author_str = f"{authors[0]} et al."
+                    author_str = f"{cleaned_authors[0]} et al."
             else:
                 author_str = "Unknown Authors"
+            
+            # Handle venue display (could be a list)
+            if isinstance(venue, list):
+                venue_display = ' | '.join(str(v) for v in venue) if venue else 'Unknown Venue'
+            else:
+                venue_display = str(venue) if venue else 'Unknown Venue'
             
             # Display paper info
             console.print(f"[bold cyan]{i}.[/bold cyan] {title}")
             console.print(f"   👥 Authors: {author_str}")
             console.print(f"   📅 Year: {year}")
-            console.print(f"   🏛️ Venue: {venue}")
+            console.print(f"   🏛️ Venue: {venue_display}")
             console.print(f"   📊 Relevance Score: {score:.2f}")
             if doi:
                 console.print(f"   🔗 DOI: {doi}")
@@ -1186,6 +1213,32 @@ def search_and_cite(query: str, context: str = "general", output_file: str = Non
             console.print("[red]Error traceback:[/red]")
             console.print(traceback.format_exc())
 
+def clean_author_name(author_name: str) -> str:
+    """Clean author names by removing database disambiguation numbers"""
+    import re
+    
+    if not author_name:
+        return author_name
+    
+    # Remove database disambiguation patterns iteratively
+    # Common patterns: " 0001", " 0002", etc. (spaced) or "Name0001" (no space)
+    # Only remove 4-digit numbers that are likely disambiguation (0001-0999, not years like 1985)
+    cleaned = str(author_name).strip()
+    
+    # Keep removing disambiguation patterns until none are found
+    while True:
+        before_clean = cleaned
+        cleaned = re.sub(r'\s+0\d{3}$', '', cleaned)  # " 0001" to " 0999"
+        cleaned = re.sub(r'(\w)0\d{3}$', r'\1', cleaned)  # "Name0001" to "Name0999"
+        if cleaned == before_clean:
+            break
+    
+    # Remove other common database artifacts
+    cleaned = re.sub(r'\s+\(\d+\)$', '', cleaned)  # Remove (1), (2), etc.
+    cleaned = re.sub(r'\s+\[\d+\]$', '', cleaned)  # Remove [1], [2], etc.
+    
+    return cleaned.strip()
+
 def generate_bibtex(paper: dict, key: str) -> str:
     """Generate comprehensive BibTeX entry for a paper with optimized string handling"""
     # Extract all fields once
@@ -1201,8 +1254,12 @@ def generate_bibtex(paper: dict, key: str) -> str:
     publisher = paper.get('publisher', '')
     editor = paper.get('editor', '') or paper.get('editors', [])
     
-    # Determine entry type efficiently
-    venue_lower = venue.lower() if venue else ''
+    # Determine entry type efficiently - handle venue being a list
+    if isinstance(venue, list):
+        venue_lower = ' '.join(str(v) for v in venue).lower() if venue else ''
+    else:
+        venue_lower = str(venue).lower() if venue else ''
+        
     if any(word in venue_lower for word in ['conference', 'proceedings', 'workshop', 'symposium']):
         entry_type = "inproceedings"
     elif any(word in venue_lower for word in ['arxiv', 'preprint']):
@@ -1213,18 +1270,21 @@ def generate_bibtex(paper: dict, key: str) -> str:
     # Pre-build all field strings to minimize repeated string operations
     fields = [f"@{entry_type}{{{key},"]
     
-    # Author field (optimized formatting)
+    # Author field (optimized formatting with name cleaning)
     if isinstance(authors, list) and authors:
-        author_str = ' and\n                  '.join(str(author) for author in authors if author)
+        # Clean author names to remove database disambiguation numbers
+        cleaned_authors = [clean_author_name(author) for author in authors if author]
+        author_str = ' and\n                  '.join(cleaned_authors)
         if author_str:
             fields.append(f"  author       = {{{author_str}}},")
     
-    # Editor field
+    # Editor field (also clean editor names)
     if editor:
         if isinstance(editor, list) and editor:
-            editor_str = ' and\n                  '.join(str(e) for e in editor if e)
+            cleaned_editors = [clean_author_name(e) for e in editor if e]
+            editor_str = ' and\n                  '.join(cleaned_editors)
         else:
-            editor_str = str(editor)
+            editor_str = clean_author_name(str(editor))
         
         if editor_str and entry_type == "inproceedings":
             fields.append(f"  editor       = {{{editor_str}}},")
@@ -1233,14 +1293,15 @@ def generate_bibtex(paper: dict, key: str) -> str:
     if title:
         fields.append(f"  title        = {{{title}}},")
     
-    # Venue-specific fields
+    # Venue-specific fields - handle venue being a list
     if venue:
+        venue_str = ' | '.join(str(v) for v in venue) if isinstance(venue, list) else str(venue)
         if entry_type == "article":
-            fields.append(f"  journal      = {{{venue}}},")
+            fields.append(f"  journal      = {{{venue_str}}},")
         elif entry_type == "inproceedings":
-            fields.append(f"  booktitle    = {{{venue}}},")
+            fields.append(f"  booktitle    = {{{venue_str}}},")
         else:
-            fields.append(f"  howpublished = {{{venue}}},")
+            fields.append(f"  howpublished = {{{venue_str}}},")
     
     # Volume and number
     if volume:

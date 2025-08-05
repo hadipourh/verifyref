@@ -157,6 +157,7 @@ def calculate_venue_similarity(venue1: str, venue2: str) -> float:
 def normalize_author_name(author: str) -> str:
     """
     Normalize author name for better matching
+    Includes cleaning of database disambiguation artifacts
     
     Args:
         author: Original author name
@@ -167,8 +168,26 @@ def normalize_author_name(author: str) -> str:
     if not author:
         return ""
     
+    # First, clean database disambiguation numbers (before lowercasing)
+    # Remove database disambiguation patterns iteratively
+    # Common patterns: " 0001", " 0002", etc. (spaced) or "Name0001" (no space)
+    # Only remove 4-digit numbers that are likely disambiguation (0001-0999, not years like 1985)
+    cleaned = str(author).strip()
+    
+    # Keep removing disambiguation patterns until none are found
+    while True:
+        before_clean = cleaned
+        cleaned = re.sub(r'\s+0\d{3}$', '', cleaned)  # " 0001" to " 0999"
+        cleaned = re.sub(r'(\w)0\d{3}$', r'\1', cleaned)  # "Name0001" to "Name0999"
+        if cleaned == before_clean:
+            break
+    
+    # Remove other common database artifacts
+    cleaned = re.sub(r'\s+\(\d+\)$', '', cleaned)  # Remove (1), (2), etc.
+    cleaned = re.sub(r'\s+\[\d+\]$', '', cleaned)  # Remove [1], [2], etc.
+    
     # Remove extra whitespace and convert to lowercase
-    normalized = re.sub(r'\s+', ' ', author.lower().strip())
+    normalized = re.sub(r'\s+', ' ', cleaned.lower().strip())
     
     # Handle different name formats
     # "Last, First Middle" -> "first middle last"
