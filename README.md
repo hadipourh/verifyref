@@ -152,7 +152,7 @@ VerifyRef uses a 5-category system to evaluate reference authenticity:
 ## Database Integration
 
 **Primary**: OpenAlex (comprehensive coverage, no rate limits)  
-**Specialized**: DBLP (CS), PubMed (Bio), IACR (Crypto), ArXiv (Preprints), Semantic Scholar, CrossRef
+**Specialized**: DBLP (CS), PubMed (Bio), IACR (Crypto), ArXiv (Preprints), Springer Nature (STM), Semantic Scholar, CrossRef
 
 **Context-Aware Prioritization**:
 - **CS**: OpenAlex → DBLP → IACR → ArXiv → Semantic Scholar
@@ -169,6 +169,7 @@ VerifyRef uses a 5-category system to evaluate reference authenticity:
    - `SEMANTIC_SCHOLAR_API_KEY` - Higher rate limits (recommended)
    - `OPENAI_API_KEY` - AI-powered fraud detection
    - `NCBI_API_KEY` - Higher PubMed rate limits
+   - `SPRINGER_API_KEY` - Access to Springer Nature database
 
 ```python
 # In config.py - Edit these values:
@@ -176,7 +177,21 @@ CROSSREF_EMAIL = "your.email@domain.com"  # ← REQUIRED
 SEMANTIC_SCHOLAR_API_KEY = "your-key-here"  # ← Optional
 OPENAI_API_KEY = "your-key-here"  # ← Optional
 NCBI_API_KEY = "your-key-here"  # ← Optional
+SPRINGER_API_KEY = "your-key-here"  # ← Optional
 ```
+
+#### API Key Setup Guide
+
+**Free Databases (No API Key Required):**
+- OpenAlex, DBLP, IACR, ArXiv - Work out of the box
+
+**Enhanced with API Keys (Optional):**
+- **Semantic Scholar API Key**: [Get it here](https://www.semanticscholar.org/product/api#api-key-form) - Higher rate limits
+- **NCBI/PubMed API Key**: [Get it here](https://www.ncbi.nlm.nih.gov/account/settings/) - Higher rate limits
+
+**API Key Required:**
+- **OpenAI API Key**: [Get it here](https://platform.openai.com/api-keys) - For AI fraud detection
+- **Springer Nature API Key**: [Get it here](https://dev.springernature.com/) - Required for all access (free signup)
 
 ### AI-Powered Verification
 
@@ -243,6 +258,7 @@ verifyref/
 │   ├── pubmed_client.py            # Biomedical
 │   ├── iacr_client.py              # Cryptography
 │   ├── arxiv_client.py             # Preprints
+│   ├── springer_client.py          # Springer Nature STM
 │   ├── semantic_scholar.py         # Academic search
 │   ├── crossref_client.py          # DOI resolution
 │   ├── classifier.py               # Authenticity classification

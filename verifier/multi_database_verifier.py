@@ -29,6 +29,7 @@ from .iacr_client import IACRClient
 from .arxiv_client import ArXivClient
 from .pubmed_client import PubMedClient
 from .openalex_client import OpenAlexClient
+from .springer_client import SpringerNatureClient
 from config import DATABASE_CONFIG
 
 logger = logging.getLogger(__name__)
@@ -85,6 +86,16 @@ class MultiDatabaseVerifier:
                 api_key=pubmed_config.get("api_key"),
                 email=pubmed_config.get("email", "verifyref@example.com")
             )
+        
+        if "springer" in self.enabled_databases and DATABASE_CONFIG.get("springer", {}).get("enabled", True):
+            springer_config = DATABASE_CONFIG.get("springer", {})
+            api_key = springer_config.get("api_key")
+            if api_key and api_key.strip() and api_key != "your-springer-api-key":
+                self.clients["springer"] = SpringerNatureClient(api_key=api_key)
+                logger.debug("Springer Nature enabled with API key")
+            else:
+                logger.info("Springer Nature disabled: API key required (no free tier available)")
+                logger.info("Get your free API key at: https://dev.springernature.com/")
         
         # Initialize CryptoDB client (optional)
         self.cryptodb_client = None

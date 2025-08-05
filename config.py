@@ -45,6 +45,10 @@ OPENAI_API_KEY = ""  # ← Add your key here
 # Get it from: https://www.ncbi.nlm.nih.gov/account/settings/
 NCBI_API_KEY = ""  # ← Add your key here
 
+# Springer Nature API Key (optional, for access to Springer Nature database)
+# Get it from: https://dev.springernature.com/
+SPRINGER_API_KEY = ""  # ← Add your key here
+
 # =============================================================================
 # ADVANCED CONFIGURATION (usually no need to change)
 # =============================================================================
@@ -76,7 +80,7 @@ SEMANTIC_SCHOLAR_CONFIG = {
 
 # Multi-Database Configuration
 DATABASE_CONFIG = {
-    "enabled_databases": os.getenv("ENABLED_DATABASES", "openalex,semantic_scholar,dblp,iacr,arxiv,pubmed").split(","),
+    "enabled_databases": os.getenv("ENABLED_DATABASES", "openalex,semantic_scholar,dblp,iacr,arxiv,pubmed,springer").split(","),
     "primary_database": os.getenv("PRIMARY_DATABASE", "openalex"),
     
     # OpenAlex Configuration (Recommended primary database)
@@ -137,6 +141,17 @@ DATABASE_CONFIG = {
         "email": CROSSREF_EMAIL if CROSSREF_EMAIL != "your.email@domain.com" else os.getenv("NCBI_EMAIL", "verifyref@example.com"),  # Use same email as CrossRef
         "timeout": 30,
         "rate_limit_delay": 0.34,  # Conservative delay (3 req/sec without API key)
+        "max_results": 10,  # Maximum results per search
+        "respect_rate_limits": True
+    },
+    
+    # Springer Nature Configuration
+    "springer": {
+        "enabled": os.getenv("SPRINGER_ENABLED", "false").lower() == "true",  # Disabled by default - requires API key
+        "api_key": SPRINGER_API_KEY or os.getenv("SPRINGER_API_KEY"),  # Use config first, then env var
+        "base_url": "https://api.springernature.com/meta/v2",
+        "timeout": 30,
+        "rate_limit_delay": 1.0,  # Conservative delay for API compliance
         "max_results": 10,  # Maximum results per search
         "respect_rate_limits": True
     },
