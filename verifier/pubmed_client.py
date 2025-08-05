@@ -21,11 +21,16 @@ import requests
 import xml.etree.ElementTree as ET
 import time
 import logging
+import threading
 from typing import List, Dict, Any, Optional
 from urllib.parse import quote_plus
 import re
 
 logger = logging.getLogger(__name__)
+
+# Global rate limiting for thread safety across multiple PubMed client instances
+_pubmed_rate_limiter = threading.Lock()
+_last_pubmed_request = 0
 
 class PubMedClient:
     """Client for searching PubMed/MEDLINE database via Entrez E-utilities API"""
@@ -45,7 +50,6 @@ class PubMedClient:
         # Rate limiting: 3 req/sec without API key, 10 req/sec with API key
         # Use more conservative delays to avoid hitting rate limits
         self.rate_limit_delay = 0.2 if api_key else 0.5  # More conservative delays
-        self.last_request_time = 0
         
         self.session = requests.Session()
         self.session.headers.update({
@@ -69,18 +73,21 @@ class PubMedClient:
             return False
     
     def _rate_limit(self):
-        """Enforce rate limiting between requests"""
-        current_time = time.time()
-        time_since_last = current_time - self.last_request_time
+        """Enforce thread-safe rate limiting between requests across all instances"""
+        global _pubmed_rate_limiter, _last_pubmed_request
         
-        if time_since_last < self.rate_limit_delay:
-            sleep_time = self.rate_limit_delay - time_since_last
-            time.sleep(sleep_time)
-        
-        self.last_request_time = time.time()
+        with _pubmed_rate_limiter:
+            current_time = time.time()
+            time_since_last = current_time - _last_pubmed_request
+            
+            if time_since_last < self.rate_limit_delay:
+                sleep_time = self.rate_limit_delay - time_since_last
+                time.sleep(sleep_time)
+            
+            _last_pubmed_request = time.time()
     
-    def _make_request(self, endpoint: str, params: Dict[str, Any]) -> Optional[str]:
-        """Make API request with rate limiting and error handling"""
+    def _make_request(self, endpoint: str, params: Dict[str, Any], max_retries: int = 3) -> Optional[str]:
+        """Make API request with rate limiting, error handling, and retry logic for 429 errors"""
         self._rate_limit()
         
         # Add common parameters
@@ -94,16 +101,34 @@ class PubMedClient:
         
         url = f"{self.base_url}/{endpoint}"
         
-        try:
-            logger.debug(f"PubMed API request: {endpoint} with params: {params}")
-            response = self.session.get(url, params=params, timeout=30)
-            response.raise_for_status()
-            
-            return response.text
-            
-        except requests.exceptions.RequestException as e:
-            logger.warning(f"PubMed API request failed: {e}")
-            return None
+        for attempt in range(max_retries + 1):
+            try:
+                if attempt > 0:
+                    logger.debug(f"PubMed API retry attempt {attempt}/{max_retries}")
+                
+                logger.debug(f"PubMed API request: {endpoint} with params: {params}")
+                response = self.session.get(url, params=params, timeout=30)
+                response.raise_for_status()
+                
+                return response.text
+                
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code == 429 and attempt < max_retries:
+                    # Rate limit exceeded - use exponential backoff
+                    wait_time = (2 ** attempt) * self.rate_limit_delay  # 0.5s, 1s, 2s...
+                    logger.warning(f"PubMed rate limit exceeded (429), retrying in {wait_time:.1f}s (attempt {attempt + 1}/{max_retries + 1})")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    logger.warning(f"PubMed API request failed: {e}")
+                    return None
+                    
+            except requests.exceptions.RequestException as e:
+                logger.warning(f"PubMed API request failed: {e}")
+                return None
+        
+        logger.warning(f"PubMed API request failed after {max_retries + 1} attempts")
+        return None
     
     def _search_pubmed(self, query: str, max_results: int = 20) -> List[str]:
         """
