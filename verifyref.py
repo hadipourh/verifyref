@@ -193,8 +193,8 @@ def apply_runtime_config(args):
             
             if not api_key:
                 console.print("[red]❌ Cannot enable AI verification: No OpenAI API key found[/red]")
-                console.print("[yellow]   • Set OPENAI_API_KEY environment variable, or[/yellow]")
-                console.print("[yellow]   • Configure openai_api_key in config.py[/yellow]")
+                console.print("[yellow]   • Set OPENAI_API_KEY in config.py (recommended), or[/yellow]")
+                console.print("[yellow]   • Set OPENAI_API_KEY environment variable[/yellow]")
                 console.print("[blue]🔧 AI verification remains disabled[/blue]")
             elif not validate_openai_api_key(api_key):
                 console.print("[red]❌ Cannot enable AI verification: Invalid or expired OpenAI API key[/red]")
@@ -813,7 +813,7 @@ def verify_references(pdf_path: str, output_file: str = None, output_format: str
 def display_verification_summary(summary: Dict[str, Any], total_refs: int):
     """Display a beautiful summary table of verification results"""
     
-    table = Table(title="📊 Verification Summary", box=box.ROUNDED)
+    table = Table(title="[*] Verification Summary", box=box.ROUNDED)
     table.add_column("Classification", style="bold", min_width=24)
     table.add_column("Count", justify="right", min_width=5)
     table.add_column("Percentage", justify="right", min_width=10)
@@ -823,39 +823,39 @@ def display_verification_summary(summary: Dict[str, Any], total_refs: int):
     counts = summary.get('classification_counts', {})
     percentages = summary.get('percentages', {})
     
-    # Add rows with colors and emojis
+    # Add rows with colors and monochrome hacker-style symbols
     table.add_row(
-        "[green]✅ AUTHENTIC[/green]", 
+        "[green][+] AUTHENTIC[/green]", 
         str(counts.get('authentic', 0)), 
         f"{percentages.get('authentic', 0):6.1f}%",
         "[green]●[/green]" if counts.get('authentic', 0) > 0 else "[dim]○[/dim]"
     )
     table.add_row(
-        "[yellow]🔍 SUSPICIOUS[/yellow]", 
+        "[yellow][?] SUSPICIOUS[/yellow]", 
         str(counts.get('suspicious', 0)), 
         f"{percentages.get('suspicious', 0):6.1f}%",
         "[yellow]●[/yellow]" if counts.get('suspicious', 0) > 0 else "[dim]○[/dim]"
     )
     table.add_row(
-        "[red]❌ FAKE[/red]", 
+        "[red][X] FAKE[/red]", 
         str(counts.get('fake', 0)), 
         f"{percentages.get('fake', 0):6.1f}%",
         "[red]●[/red]" if counts.get('fake', 0) > 0 else "[dim]○[/dim]"
     )
     table.add_row(
-        "[purple]🔄 AUTHOR MANIPULATION[/purple]", 
+        "[purple][~] AUTHOR MANIPULATION[/purple]", 
         str(counts.get('author_manipulation', 0)), 
         f"{percentages.get('author_manipulation', 0):6.1f}%",
         "[purple]●[/purple]" if counts.get('author_manipulation', 0) > 0 else "[dim]○[/dim]"
     )
     table.add_row(
-        "[red]🚫 FABRICATED[/red]", 
+        "[red][-] FABRICATED[/red]", 
         str(counts.get('fabricated', 0)), 
         f"{percentages.get('fabricated', 0):6.1f}%",
         "[red]●[/red]" if counts.get('fabricated', 0) > 0 else "[dim]○[/dim]"
     )
     table.add_row(
-        "[blue]❓ INCONCLUSIVE[/blue]", 
+        "[blue][!] INCONCLUSIVE[/blue]", 
         str(counts.get('inconclusive', 0)), 
         f"{percentages.get('inconclusive', 0):6.1f}%",
         "[blue]●[/blue]" if counts.get('inconclusive', 0) > 0 else "[dim]○[/dim]"
