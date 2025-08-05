@@ -21,7 +21,35 @@ Configuration settings for VerifyRef
 import os
 from typing import Dict, Any
 
-# Load environment variables from .env file if it exists
+# =============================================================================
+# USER CONFIGURATION SECTION
+# =============================================================================
+# Edit the values below to configure VerifyRef for your use case
+
+# REQUIRED: Email for CrossRef API access (used for database identification)
+# Set your email address here for proper API usage
+CROSSREF_EMAIL = "your.email@domain.com"  # ← CHANGE THIS
+
+# OPTIONAL: API Keys for enhanced functionality
+# Leave empty ("") if you don't have these keys - the tool will work without them
+
+# Semantic Scholar API Key (recommended for higher rate limits)
+# Get it from: https://www.semanticscholar.org/product/api#api-key-form
+SEMANTIC_SCHOLAR_API_KEY = ""  # ← Add your key here
+
+# OpenAI API Key (only needed for AI-powered fraud detection)
+# Get it from: https://platform.openai.com/api-keys
+OPENAI_API_KEY = ""  # ← Add your key here
+
+# NCBI/PubMed API Key (optional, for higher PubMed rate limits)
+# Get it from: https://www.ncbi.nlm.nih.gov/account/settings/
+NCBI_API_KEY = ""  # ← Add your key here
+
+# =============================================================================
+# ADVANCED CONFIGURATION (usually no need to change)
+# =============================================================================
+
+# Load environment variables from .env file if it exists (fallback)
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -39,7 +67,7 @@ GROBID_CONFIG = {
 # Semantic Scholar API Configuration
 SEMANTIC_SCHOLAR_CONFIG = {
     "base_url": "https://api.semanticscholar.org/graph/v1",
-    "api_key": os.getenv("SEMANTIC_SCHOLAR_API_KEY"),  # Optional, but recommended for higher rate limits
+    "api_key": SEMANTIC_SCHOLAR_API_KEY or os.getenv("SEMANTIC_SCHOLAR_API_KEY"),  # Use config first, then env var
     "timeout": int(os.getenv("SEMANTIC_SCHOLAR_TIMEOUT", "30")),
     "max_retries": int(os.getenv("SEMANTIC_SCHOLAR_MAX_RETRIES", "3")),
     "rate_limit_delay": float(os.getenv("SEMANTIC_SCHOLAR_RATE_LIMIT", "5.0")),  # seconds between requests - increased to avoid 429
@@ -73,7 +101,7 @@ DATABASE_CONFIG = {
     "crossref": {
         "base_url": "https://api.crossref.org/works",
         "timeout": 30,
-        "email": os.getenv("CROSSREF_EMAIL", "your.email@domain.com"),  # REQUIRED: Set your email here or use CROSSREF_EMAIL env var
+        "email": CROSSREF_EMAIL if CROSSREF_EMAIL != "your.email@domain.com" else os.getenv("CROSSREF_EMAIL", "your.email@domain.com"),  # Use config first, then env var
         "enabled": os.getenv("CROSSREF_ENABLED", "false").lower() == "true",  # Disabled by default - use as fallback only
         "rate_limit_delay": 1.0,  # Polite delay between requests
         "respect_rate_limits": True
@@ -105,8 +133,8 @@ DATABASE_CONFIG = {
     # PubMed/MEDLINE Configuration
     "pubmed": {
         "enabled": os.getenv("PUBMED_ENABLED", "true").lower() == "true",  # Enabled by default
-        "api_key": os.getenv("NCBI_API_KEY"),  # Optional but recommended for higher rate limits
-        "email": os.getenv("NCBI_EMAIL", "verifyref@example.com"),  # Required for NCBI API
+        "api_key": NCBI_API_KEY or os.getenv("NCBI_API_KEY"),  # Use config first, then env var
+        "email": CROSSREF_EMAIL if CROSSREF_EMAIL != "your.email@domain.com" else os.getenv("NCBI_EMAIL", "verifyref@example.com"),  # Use same email as CrossRef
         "timeout": 30,
         "rate_limit_delay": 0.34,  # Conservative delay (3 req/sec without API key)
         "max_results": 10,  # Maximum results per search
@@ -117,8 +145,8 @@ DATABASE_CONFIG = {
     "ai_verification": {
         "enabled": os.getenv("ENABLE_AI_VERIFICATION", "false").lower() == "true",  # Disabled by default - users must explicitly enable
         
-        # OpenAI API Key - Enter your key directly here or use environment variable
-        "openai_api_key": os.getenv("OPENAI_API_KEY", ""),  # No default key - user must provide
+        # OpenAI API Key - Use config first, then environment variable
+        "openai_api_key": OPENAI_API_KEY or os.getenv("OPENAI_API_KEY", ""),  # No default key - user must provide
         
         "model": "gpt-4o-mini",  # Better compatibility and lower cost - supports JSON format
         "timeout": 30,
