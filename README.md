@@ -21,15 +21,15 @@ Here is the summary of the output of the tool for that paper:
 ╭──────────────────────────┬───────┬────────────┬────────╮
 │ Classification           │ Count │ Percentage │ Status │
 ├──────────────────────────┼───────┼────────────┼────────┤
-│ [+] AUTHENTIC            │     9 │      50.0% │   ●    │
+│ [+] AUTHENTIC            │     6 │      33.3% │   ●    │
 │ [?] SUSPICIOUS           │     8 │      44.4% │   ●    │
 │ [X] FAKE                 │     0 │       0.0% │   ○    │
 │ [~] AUTHOR MANIPULATION  │     0 │       0.0% │   ○    │
-│ [-] FABRICATED           │     1 │       5.6% │   ●    │
+│ [-] FABRICATED           │     4 │      22.2% │   ●    │
 │ [!] INCONCLUSIVE         │     0 │       0.0% │   ○    │
 ╰──────────────────────────┴───────┴────────────┴────────╯
 
-🔴 HIGH - Notable fraud or suspicious references detected
+🚨 CRITICAL - Significant fraud detected (author manipulation or fabrication)
 ```
 
 I called this tool VerifyRef and decided to publish it to help other researchers. 
@@ -120,9 +120,9 @@ python verifyref.py paper.pdf --output results.txt
 
 ```bash
 # Verification rigor levels
-python verifyref.py paper.pdf --rigor strict    # High precision
-python verifyref.py paper.pdf --rigor balanced  # Default
-python verifyref.py paper.pdf --rigor lenient   # High recall
+python verifyref.py paper.pdf --rigor strict -o refrevire.txt   # High precision
+python verifyref.py paper.pdf --rigor balanced -o refrevire.txt # Default
+python verifyref.py paper.pdf --rigor lenient -o refrevire.txt  # High recall
 
 # Context-aware search
 python verifyref.py --cite "Finding the Impossible Impossible-Differential Attack" --context cs
@@ -218,7 +218,7 @@ done
 - Too many false positives → Try `--rigor lenient`
 - Database timeouts → Check internet connection
 - GROBID not responding → Restart: `curl http://localhost:8070/api/isalive`
-- Port 8070 in use → `docker stop $(docker ps -q --filter "publish=8070")`
+- Port 8070 in use → `docker stop $(docker ps -q --filter "publish=8070")` and again run `docker run -d -p 8070:8070 lfoppiano/grobid:0.8.2`. 
 
 **Performance**: Automatic parallel processing (4 workers), smart caching, context-aware database selection
 
