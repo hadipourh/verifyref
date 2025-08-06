@@ -34,7 +34,7 @@ class GrobidClient:
     
     def __init__(self, base_url: Optional[str] = None):
         """
-        Initialize GROBID client
+        Initialize GROBID client with enhanced configuration
         
         Args:
             base_url: GROBID server URL (defaults to config value)
@@ -43,8 +43,18 @@ class GrobidClient:
         self.timeout = GROBID_CONFIG["timeout"]
         self.max_retries = GROBID_CONFIG["max_retries"]
         
+        # Enhanced processing options
+        self.use_consolidation = GROBID_CONFIG.get("use_consolidation", True)
+        self.include_raw_citations = GROBID_CONFIG.get("include_raw_citations", True)
+        self.segment_sentences = GROBID_CONFIG.get("segment_sentences", True)
+        self.generate_ids = GROBID_CONFIG.get("generate_ids", True)
+        
         # Ensure base URL doesn't end with slash
         self.base_url = self.base_url.rstrip('/')
+        
+        logger.info(f"GROBID client initialized with enhanced options: "
+                   f"consolidation={self.use_consolidation}, "
+                   f"raw_citations={self.include_raw_citations}")
         
     def is_available(self) -> bool:
         """
@@ -63,16 +73,24 @@ class GrobidClient:
             logger.error(f"GROBID service not available: {e}")
             return False
     
-    def extract_references(self, pdf_path: str) -> Optional[List[Dict[str, Any]]]:
+    def extract_references(self, pdf_path: str, use_consolidation: Optional[bool] = None, 
+                          include_raw_citations: Optional[bool] = None) -> Optional[List[Dict[str, Any]]]:
         """
-        Extract references from a PDF document
+        Extract references from a PDF document with enhanced processing options
         
         Args:
             pdf_path: Path to the PDF file
+            use_consolidation: Whether to use bibliographic consolidation (defaults to config)
+            include_raw_citations: Whether to include raw citation text (defaults to config)
             
         Returns:
             List of extracted references or None if extraction failed
         """
+        # Use instance defaults if not specified
+        if use_consolidation is None:
+            use_consolidation = self.use_consolidation
+        if include_raw_citations is None:
+            include_raw_citations = self.include_raw_citations
         if not Path(pdf_path).exists():
             logger.error(f"PDF file not found: {pdf_path}")
             return None
@@ -86,31 +104,55 @@ class GrobidClient:
             with open(pdf_path, 'rb') as pdf_file:
                 files = {'input': pdf_file}
                 
-                # Try processReferences first, fall back to processFulltextDocument
+                # Enhanced parameters for better processing
+                data = {}
+                if use_consolidation:
+                    data['consolidateHeader'] = '1'  # Consolidate header information
+                    data['consolidateCitations'] = '1'  # Consolidate citations with external sources
+                if include_raw_citations:
+                    data['includeRawCitations'] = '1'  # Include raw citation strings
+                
+                # Try processReferences first with enhanced parameters
                 response = requests.post(
                     f"{self.base_url}/api/processReferences",
                     files=files,
+                    data=data,
                     timeout=self.timeout
                 )
                 
                 if response.status_code == 200 and response.text.strip():
-                    references = self._parse_grobid_response(response.text)
+                    references = self._parse_grobid_response(response.text, include_raw_citations)
                     if references:
+                        logger.info(f"Successfully extracted {len(references)} references using processReferences")
                         return references
                     
-                # If no references from processReferences, try full text processing
+                # If no references from processReferences, try full text processing with enhanced parameters
                 logger.info("No references from processReferences, trying full text processing...")
                 
                 # Reopen file for second request
                 pdf_file.seek(0)
+                
+                # Enhanced parameters for full text processing
+                fulltext_data = {
+                    'consolidateHeader': '1' if use_consolidation else '0',
+                    'consolidateCitations': '1' if use_consolidation else '0',
+                    'includeRawCitations': '1' if include_raw_citations else '0',
+                    'generateIDs': '1' if self.generate_ids else '0',  # Generate unique IDs for elements
+                    'segmentSentences': '1' if self.segment_sentences else '0'  # Improve sentence segmentation
+                }
+                
                 response = requests.post(
                     f"{self.base_url}/api/processFulltextDocument",
                     files={'input': pdf_file},
+                    data=fulltext_data,
                     timeout=self.timeout
                 )
                 
                 if response.status_code == 200:
-                    return self._parse_grobid_response(response.text)
+                    references = self._parse_grobid_response(response.text, include_raw_citations)
+                    if references:
+                        logger.info(f"Successfully extracted {len(references)} references using processFulltextDocument")
+                    return references
                 else:
                     logger.error(f"GROBID full text processing failed with status {response.status_code}")
                     return None
@@ -122,12 +164,13 @@ class GrobidClient:
             logger.error(f"Unexpected error extracting references: {e}")
             return None
     
-    def _parse_grobid_response(self, xml_content: str) -> List[Dict[str, Any]]:
+    def _parse_grobid_response(self, xml_content: str, include_raw_citations: bool = True) -> List[Dict[str, Any]]:
         """
-        Parse GROBID XML response to extract reference information
+        Parse GROBID XML response to extract reference information with enhanced extraction
         
         Args:
             xml_content: Raw XML response from GROBID
+            include_raw_citations: Whether to extract raw citation text for fallback processing
             
         Returns:
             List of parsed references
@@ -149,7 +192,7 @@ class GrobidClient:
             logger.info(f"Found {len(biblstructs)} biblStruct elements in XML")
             
             for biblio in biblstructs:
-                reference = self._extract_reference_data(biblio, namespace)
+                reference = self._extract_reference_data(biblio, namespace, include_raw_citations)
                 if reference:
                     references.append(reference)
                     
@@ -161,13 +204,15 @@ class GrobidClient:
         logger.info(f"Extracted {len(references)} references from GROBID response")
         return references
     
-    def _extract_reference_data(self, biblio_elem: ET.Element, namespace: str = '') -> Optional[Dict[str, Any]]:
+    def _extract_reference_data(self, biblio_elem: ET.Element, namespace: str = '', 
+                              include_raw_citations: bool = True) -> Optional[Dict[str, Any]]:
         """
-        Extract reference data from a single biblStruct element
+        Extract reference data from a single biblStruct element with enhanced parsing
         
         Args:
             biblio_elem: XML element containing bibliographic data
             namespace: XML namespace to use in queries
+            include_raw_citations: Whether to extract raw citation text
             
         Returns:
             Dictionary with extracted reference data or None
@@ -184,84 +229,54 @@ class GrobidClient:
                 'pages': '',
                 'doi': '',
                 'isbn': '',
-                'url': ''
+                'url': '',
+                'confidence_indicators': {}  # Add confidence indicators from GROBID
             }
             
-            # Extract title - try multiple approaches
-            title_elem = biblio_elem.find(f'.//{namespace}title[@type="main"]')
-            if title_elem is None:
-                title_elem = biblio_elem.find(f'.//{namespace}title[@level="a"]')
-            if title_elem is None:
-                title_elem = biblio_elem.find(f'.//{namespace}title')
-                
-            if title_elem is not None and title_elem.text:
-                reference['title'] = title_elem.text.strip()
+            # Extract raw citation text if available and requested
+            if include_raw_citations:
+                raw_elem = biblio_elem.find(f'.//{namespace}note[@type="raw_reference"]')
+                if raw_elem is not None and raw_elem.text:
+                    reference['raw_text'] = raw_elem.text.strip()
             
-            # Extract authors
+            # Extract title with enhanced approach - try multiple strategies
+            title_elem = self._find_title_element(biblio_elem, namespace)
+            if title_elem is not None and title_elem.text:
+                title_text = title_elem.text.strip()
+                # Check for confidence attributes
+                if 'confidence' in title_elem.attrib:
+                    reference['confidence_indicators']['title'] = float(title_elem.attrib['confidence'])
+                reference['title'] = title_text
+            
+            # Extract authors with enhanced parsing
+            # Extract authors with enhanced parsing
             authors = []
             author_xpath = f'.//{namespace}author/{namespace}persName'
             for author_elem in biblio_elem.findall(author_xpath):
-                forename_elem = author_elem.find(f'{namespace}forename')
-                surname_elem = author_elem.find(f'{namespace}surname')
-                
-                author_name = ''
-                if forename_elem is not None and forename_elem.text:
-                    author_name += forename_elem.text.strip() + ' '
-                if surname_elem is not None and surname_elem.text:
-                    author_name += surname_elem.text.strip()
-                
-                if author_name.strip():
-                    authors.append(author_name.strip())
+                author_name = self._extract_author_name(author_elem, namespace)
+                if author_name:
+                    authors.append(author_name)
             
             reference['authors'] = authors
             
-            # Extract venue (journal, conference, etc.)
-            venue_elem = biblio_elem.find(f'.//{namespace}title[@level="j"]')  # journal
-            if venue_elem is None:
-                venue_elem = biblio_elem.find(f'.//{namespace}title[@level="m"]')  # monograph/book
-            if venue_elem is None:
-                venue_elem = biblio_elem.find(f'.//{namespace}title[@type="j"]')  # alternative journal
-                
+            # Extract venue with enhanced approach
+            venue_elem = self._find_venue_element(biblio_elem, namespace)
             if venue_elem is not None and venue_elem.text:
                 reference['venue'] = venue_elem.text.strip()
             
-            # Extract year
-            date_elem = biblio_elem.find(f'.//{namespace}date[@type="published"]')
-            if date_elem is not None:
-                year_attr = date_elem.get('when')
-                if year_attr:
-                    try:
-                        reference['year'] = int(year_attr[:4])  # Extract year from date
-                    except (ValueError, TypeError):
-                        pass
+            # Extract publication date with enhanced parsing
+            year = self._extract_publication_year(biblio_elem, namespace)
+            if year:
+                reference['year'] = year
             
-            # Extract volume, issue, pages
-            vol_elem = biblio_elem.find(f'.//{namespace}biblScope[@unit="volume"]')
-            if vol_elem is not None and vol_elem.text:
-                reference['volume'] = vol_elem.text.strip()
-                
-            issue_elem = biblio_elem.find(f'.//{namespace}biblScope[@unit="issue"]')
-            if issue_elem is not None and issue_elem.text:
-                reference['issue'] = issue_elem.text.strip()
-                
-            pages_elem = biblio_elem.find(f'.//{namespace}biblScope[@unit="page"]')
-            if pages_elem is not None:
-                from_page = pages_elem.get('from', '')
-                to_page = pages_elem.get('to', '')
-                if from_page and to_page:
-                    reference['pages'] = f"{from_page}-{to_page}"
-                elif from_page:
-                    reference['pages'] = from_page
-                elif pages_elem.text:
-                    reference['pages'] = pages_elem.text.strip()
+            # Extract bibliographic details
+            self._extract_bibliographic_details(biblio_elem, namespace, reference)
             
-            # Extract DOI
-            doi_elem = biblio_elem.find(f'.//{namespace}idno[@type="DOI"]')
-            if doi_elem is not None and doi_elem.text:
-                reference['doi'] = doi_elem.text.strip()
+            # Extract identifiers (DOI, ISBN, etc.)
+            self._extract_identifiers(biblio_elem, namespace, reference)
             
-            # Only return references with at least a title
-            if reference['title']:
+            # Only return references with at least a title or substantial content
+            if reference['title'] or reference['raw_text'] or (reference['authors'] and reference['venue']):
                 return reference
             else:
                 return None
@@ -269,3 +284,151 @@ class GrobidClient:
         except Exception as e:
             logger.error(f"Error extracting reference data: {e}")
             return None
+    
+    def _find_title_element(self, biblio_elem: ET.Element, namespace: str) -> Optional[ET.Element]:
+        """Find the best title element using multiple strategies"""
+        # Strategy 1: Article title (level="a")
+        title_elem = biblio_elem.find(f'.//{namespace}title[@level="a"]')
+        if title_elem is not None and title_elem.text and title_elem.text.strip():
+            return title_elem
+        
+        # Strategy 2: Main title
+        title_elem = biblio_elem.find(f'.//{namespace}title[@type="main"]')
+        if title_elem is not None and title_elem.text and title_elem.text.strip():
+            return title_elem
+        
+        # Strategy 3: Any title that's not a journal title
+        for title_elem in biblio_elem.findall(f'.//{namespace}title'):
+            if (title_elem.get('level') != 'j' and 
+                title_elem.get('type') != 'j' and
+                title_elem.text and title_elem.text.strip()):
+                return title_elem
+        
+        return None
+    
+    def _find_venue_element(self, biblio_elem: ET.Element, namespace: str) -> Optional[ET.Element]:
+        """Find the best venue/journal element"""
+        # Strategy 1: Journal title (level="j")
+        venue_elem = biblio_elem.find(f'.//{namespace}title[@level="j"]')
+        if venue_elem is not None and venue_elem.text:
+            return venue_elem
+        
+        # Strategy 2: Monograph/book title (level="m")
+        venue_elem = biblio_elem.find(f'.//{namespace}title[@level="m"]')
+        if venue_elem is not None and venue_elem.text:
+            return venue_elem
+        
+        # Strategy 3: Journal type title
+        venue_elem = biblio_elem.find(f'.//{namespace}title[@type="j"]')
+        if venue_elem is not None and venue_elem.text:
+            return venue_elem
+        
+        return None
+    
+    def _extract_author_name(self, author_elem: ET.Element, namespace: str) -> str:
+        """Extract a properly formatted author name"""
+        forename_elem = author_elem.find(f'{namespace}forename')
+        surname_elem = author_elem.find(f'{namespace}surname')
+        
+        # Try different name extraction strategies
+        parts = []
+        
+        # Get forename(s)
+        if forename_elem is not None and forename_elem.text:
+            forename = forename_elem.text.strip()
+            if forename:
+                parts.append(forename)
+        
+        # Get surname
+        if surname_elem is not None and surname_elem.text:
+            surname = surname_elem.text.strip()
+            if surname:
+                parts.append(surname)
+        
+        if parts:
+            return ' '.join(parts)
+        
+        # Fallback: use the full text content
+        if author_elem.text:
+            return author_elem.text.strip()
+        
+        return ''
+    
+    def _extract_publication_year(self, biblio_elem: ET.Element, namespace: str) -> Optional[int]:
+        """Extract publication year with multiple strategies"""
+        # Strategy 1: Published date
+        date_elem = biblio_elem.find(f'.//{namespace}date[@type="published"]')
+        if date_elem is not None:
+            when_attr = date_elem.get('when')
+            if when_attr:
+                try:
+                    return int(when_attr[:4])
+                except (ValueError, TypeError):
+                    pass
+        
+        # Strategy 2: Any date element
+        for date_elem in biblio_elem.findall(f'.//{namespace}date'):
+            when_attr = date_elem.get('when')
+            if when_attr:
+                try:
+                    return int(when_attr[:4])
+                except (ValueError, TypeError):
+                    continue
+            # Try text content
+            if date_elem.text:
+                import re
+                year_match = re.search(r'\b(19|20)\d{2}\b', date_elem.text)
+                if year_match:
+                    return int(year_match.group())
+        
+        return None
+    
+    def _extract_bibliographic_details(self, biblio_elem: ET.Element, namespace: str, reference: Dict[str, Any]):
+        """Extract volume, issue, pages with enhanced parsing"""
+        # Volume
+        vol_elem = biblio_elem.find(f'.//{namespace}biblScope[@unit="volume"]')
+        if vol_elem is not None and vol_elem.text:
+            reference['volume'] = vol_elem.text.strip()
+        
+        # Issue
+        issue_elem = biblio_elem.find(f'.//{namespace}biblScope[@unit="issue"]')
+        if issue_elem is not None and issue_elem.text:
+            reference['issue'] = issue_elem.text.strip()
+        
+        # Pages - try multiple strategies
+        pages_elem = biblio_elem.find(f'.//{namespace}biblScope[@unit="page"]')
+        if pages_elem is not None:
+            from_page = pages_elem.get('from', '')
+            to_page = pages_elem.get('to', '')
+            if from_page and to_page:
+                reference['pages'] = f"{from_page}-{to_page}"
+            elif from_page:
+                reference['pages'] = from_page
+            elif pages_elem.text:
+                reference['pages'] = pages_elem.text.strip()
+    
+    def _extract_identifiers(self, biblio_elem: ET.Element, namespace: str, reference: Dict[str, Any]):
+        """Extract DOI, ISBN, and other identifiers"""
+        # DOI
+        doi_elem = biblio_elem.find(f'.//{namespace}idno[@type="DOI"]')
+        if doi_elem is not None and doi_elem.text:
+            reference['doi'] = doi_elem.text.strip()
+        
+        # Alternative DOI extraction
+        if not reference['doi']:
+            for idno_elem in biblio_elem.findall(f'.//{namespace}idno'):
+                if idno_elem.text and 'doi' in idno_elem.text.lower():
+                    reference['doi'] = idno_elem.text.strip()
+                    break
+        
+        # ISBN
+        isbn_elem = biblio_elem.find(f'.//{namespace}idno[@type="ISBN"]')
+        if isbn_elem is not None and isbn_elem.text:
+            reference['isbn'] = isbn_elem.text.strip()
+        
+        # URL/URI
+        ptr_elem = biblio_elem.find(f'.//{namespace}ptr')
+        if ptr_elem is not None:
+            target = ptr_elem.get('target')
+            if target:
+                reference['url'] = target

@@ -66,6 +66,12 @@ GROBID_CONFIG = {
     "base_url": os.getenv("GROBID_URL", "http://localhost:8070"),
     "timeout": int(os.getenv("GROBID_TIMEOUT", "60")),
     "max_retries": int(os.getenv("GROBID_MAX_RETRIES", "3")),
+    
+    # Enhanced processing options
+    "use_consolidation": os.getenv("GROBID_USE_CONSOLIDATION", "true").lower() == "true",
+    "include_raw_citations": os.getenv("GROBID_INCLUDE_RAW", "true").lower() == "true",
+    "segment_sentences": os.getenv("GROBID_SEGMENT_SENTENCES", "true").lower() == "true",
+    "generate_ids": os.getenv("GROBID_GENERATE_IDS", "true").lower() == "true",
 }
 
 # Semantic Scholar API Configuration
