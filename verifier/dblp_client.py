@@ -30,12 +30,17 @@ class DBLPClient:
     Client for interacting with DBLP Computer Science Bibliography
     """
     
-    def __init__(self):
-        """Initialize DBLP client"""
+    def __init__(self, fast_mode: bool = False):
+        """Initialize DBLP client with optional fast mode
+        
+        Args:
+            fast_mode: If True, use only the most effective search strategy for better performance
+        """
         self.base_url = "https://dblp.org/search/publ/api"
         self.timeout = 15  # Reduced from 30 to 15 seconds
         self.max_retries = 2  # Add retry limit
         self.retry_delay = 1  # Delay between retries
+        self.fast_mode = fast_mode  # Performance optimization flag
         self.session = requests.Session()
         self.session.headers.update({
             'User-Agent': 'RefCheck/1.0 (Academic Reference Verification)'
@@ -48,7 +53,7 @@ class DBLPClient:
                     venue: str = None,
                     limit: int = 10) -> List[Dict[str, Any]]:
         """
-        Search DBLP for papers
+        Search DBLP for papers using optimized search strategies
         
         Args:
             title: Paper title to search for
@@ -62,44 +67,162 @@ class DBLPClient:
         """
         if not title and not authors:
             return []
+
+        # Optimized search with fewer, more effective strategies
+        search_strategies = self._generate_optimized_search_strategies(title, authors, year, venue)
         
-        # Build search query - DBLP works better with simpler, focused queries
-        query_parts = []
-        
-        # Priority 1: Title is most important
-        if title:
-            # Use title as the primary search term
-            query_parts.append(f'"{title}"')  # Quote the title for exact phrase matching
-        
-        # Priority 2: Add main author (first author usually)
-        if authors and len(authors) > 0:
-            # Only use first author to avoid overly complex queries
-            main_author = authors[0]
-            # Extract last name if possible for better matching
-            author_parts = main_author.split()
-            if len(author_parts) > 1:
-                query_parts.append(author_parts[-1])  # Last name
+        for strategy_name, query in search_strategies:
+            logger.debug(f"DBLP strategy '{strategy_name}': {query}")
+            
+            params = {
+                'q': query,
+                'format': 'json',
+                'h': min(limit, 100)  # DBLP max is 100
+            }
+            
+            results = self._execute_search(query, params)
+            if results:
+                logger.debug(f"DBLP strategy '{strategy_name}' found {len(results)} results")
+                return results
             else:
-                query_parts.append(main_author)
+                logger.debug(f"DBLP strategy '{strategy_name}' found 0 results")
         
-        # Priority 3: Add year if available (DBLP often indexes by year)
+        logger.debug("All DBLP search strategies exhausted, returning empty results")
+        return []
+
+    def _generate_optimized_search_strategies(self, title: str, authors: List[str], year: int, venue: str) -> List[tuple]:
+        """Generate optimized search strategies for DBLP with minimal API calls"""
+        strategies = []
+        
+        if not title:
+            return strategies
+        
+        # Clean and prepare title variations
+        title_clean = self._clean_title_for_search(title)
+        title_keywords = self._extract_title_keywords(title_clean)
+        
+        if self.fast_mode:
+            # Fast mode: Only use the single most effective strategy
+            if authors and year and title_keywords:
+                main_author_last = self._extract_last_name(authors[0])
+                if main_author_last:
+                    # Use keywords for better flexibility while keeping precision
+                    keywords_query = f'{" ".join(title_keywords)} {main_author_last} {year}'
+                    strategies.append(("keywords_author_year", keywords_query))
+                    return strategies
+            
+            # Fallback for fast mode when author/year not available
+            if year and title_keywords:
+                # Use keywords + year for better results than exact title
+                strategies.append(("keywords_year", f'{" ".join(title_keywords)} {year}'))
+            elif year:
+                strategies.append(("exact_title_year", f'"{title_clean}" {year}'))
+            else:
+                strategies.append(("exact_title_only", f'"{title_clean}"'))
+            return strategies
+        
+        # Normal mode: Use only 2 most effective strategies for optimal performance
+        
+        # Strategy 1: Keywords + author + year (most comprehensive and flexible)
+        if authors and year and title_keywords:
+            main_author_last = self._extract_last_name(authors[0])
+            if main_author_last:
+                keywords_query = f'{" ".join(title_keywords)} {main_author_last} {year}'
+                strategies.append(("keywords_author_year", keywords_query))
+        
+        # Strategy 2: Fallback - exact title + year (good precision)
         if year:
-            query_parts.append(str(year))
+            strategies.append(("exact_title_year", f'"{title_clean}" {year}'))
+        else:
+            # If no year, use exact title only as fallback
+            strategies.append(("exact_title_only", f'"{title_clean}"'))
         
-        # Don't include venue in DBLP queries - it often makes them too restrictive
-        # DBLP has its own venue normalization that might not match extracted venue names
+        return strategies
+    
+    def _clean_title_for_search(self, title: str) -> str:
+        """Clean title for better DBLP search compatibility"""
+        import re
         
-        query = ' '.join(query_parts)
+        # Remove common formatting issues
+        title = title.strip()
         
-        params = {
-            'q': query,
-            'format': 'json',
-            'h': min(limit, 100)  # DBLP max is 100
+        # Remove excessive punctuation and special characters that confuse DBLP
+        title = re.sub(r'[^\w\s\-:]', ' ', title)
+        
+        # Normalize whitespace
+        title = re.sub(r'\s+', ' ', title).strip()
+        
+        # Remove common academic prefixes/suffixes that make queries too specific
+        noise_patterns = [
+            r'\b(a|an|the)\s+',  # Articles
+            r'\s+approach$',     # "approach"
+            r'\s+method$',       # "method"
+            r'\s+algorithm$',    # "algorithm"
+        ]
+        
+        for pattern in noise_patterns:
+            title = re.sub(pattern, ' ', title, flags=re.IGNORECASE)
+        
+        return re.sub(r'\s+', ' ', title).strip()
+    
+    def _extract_title_keywords(self, title: str, min_word_length: int = 3) -> List[str]:
+        """Extract meaningful keywords from title"""
+        import re
+        
+        # Split into words
+        words = title.split()
+        
+        # Common stop words to ignore
+        stop_words = {
+            'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with',
+            'by', 'from', 'up', 'about', 'into', 'through', 'during', 'before', 'after',
+            'above', 'below', 'between', 'among', 'through', 'during', 'before', 'after',
+            'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had',
+            'new', 'novel', 'improved', 'efficient', 'effective', 'approach', 'method'
         }
         
-        try:
-            logger.debug(f"Searching DBLP for: {query}")
+        keywords = []
+        for word in words:
+            # Preserve hyphens within words (e.g., "zero-correlation", "multi-party")
+            # but remove other punctuation
+            word_clean = re.sub(r'[^\w\-]', '', word.lower())
+            # Remove leading/trailing hyphens but keep internal ones
+            word_clean = word_clean.strip('-')
             
+            if (len(word_clean) >= min_word_length and 
+                word_clean not in stop_words and
+                not word_clean.isdigit()):
+                keywords.append(word_clean)
+        
+        # Return top 4-5 keywords to avoid overly complex queries
+        return keywords[:5]
+    
+    def _extract_last_name(self, author: str) -> str:
+        """Extract last name from author string"""
+        if not author:
+            return ""
+        
+        # Handle various author formats
+        parts = author.strip().split()
+        if not parts:
+            return ""
+        
+        # Common formats:
+        # "John Smith" -> "Smith"
+        # "Smith, John" -> "Smith"  
+        # "J Smith" -> "Smith"
+        # "Smith J" -> "Smith"
+        
+        if ',' in author:
+            # "Smith, John" format
+            return parts[0].rstrip(',')
+        else:
+            # "John Smith" format - return last part
+            return parts[-1]
+    
+    def _execute_search(self, query: str, params: dict) -> List[Dict[str, Any]]:
+        """Execute a single DBLP search with the given parameters"""
+        try:
             # Add retry logic with exponential backoff
             for attempt in range(self.max_retries + 1):
                 try:
@@ -113,28 +236,68 @@ class DBLPClient:
                         time.sleep(wait_time)
                     else:
                         logger.error(f"DBLP request failed after {self.max_retries + 1} attempts: {e}")
+                        logger.error(f"DBLP query was: {query}")
+                        logger.error(f"DBLP URL was: {self.base_url}")
                         return []
                 except requests.exceptions.RequestException as e:
                     logger.error(f"DBLP request error: {e}")
+                    logger.error(f"DBLP query was: {query}")
+                    logger.error(f"DBLP response status: {getattr(response, 'status_code', 'Unknown')}")
                     return []
             
-            data = response.json()
+            # Parse response with detailed error reporting
+            try:
+                data = response.json()
+            except ValueError as e:
+                logger.error(f"DBLP returned invalid JSON: {e}")
+                logger.error(f"DBLP response text (first 200 chars): {response.text[:200]}...")
+                return []
+            
             results = []
             
-            if 'result' in data and 'hits' in data['result']:
-                hits = data['result']['hits']
-                if isinstance(hits, dict) and 'hit' in hits:
-                    hit_list = hits['hit']
-                    if not isinstance(hit_list, list):
-                        hit_list = [hit_list]
-                    
-                    for hit in hit_list:
-                        if 'info' in hit:
-                            paper = self._parse_dblp_paper(hit['info'])
-                            if paper:
-                                results.append(paper)
+            # Enhanced response parsing with diagnostics
+            if 'result' in data:
+                result_data = data['result']
+                if 'hits' in result_data:
+                    hits = result_data['hits']
+                    if isinstance(hits, dict):
+                        total_hits = hits.get('@total', 0)
+                        logger.debug(f"DBLP reports {total_hits} total hits available")
+                        
+                        if 'hit' in hits:
+                            hit_list = hits['hit']
+                            if not isinstance(hit_list, list):
+                                hit_list = [hit_list]
+                            
+                            logger.debug(f"DBLP returned {len(hit_list)} hits to process")
+                            
+                            for i, hit in enumerate(hit_list):
+                                if 'info' in hit:
+                                    paper = self._parse_dblp_paper(hit['info'])
+                                    if paper:
+                                        results.append(paper)
+                                    else:
+                                        logger.debug(f"DBLP hit {i+1} failed to parse")
+                                else:
+                                    logger.debug(f"DBLP hit {i+1} missing 'info' field")
+                        else:
+                            logger.debug("DBLP response has hits but no 'hit' field")
+                    else:
+                        logger.debug(f"DBLP hits is not a dict: {type(hits)}")
+                else:
+                    logger.debug("DBLP response missing 'hits' field")
+            else:
+                logger.debug("DBLP response missing 'result' field")
+                logger.debug(f"DBLP response keys: {list(data.keys()) if isinstance(data, dict) else 'Not a dict'}")
             
-            logger.info(f"DBLP search returned {len(results)} results")
+            if len(results) == 0 and 'result' in data and 'hits' in data['result']:
+                # If we got a valid response structure but no results, it's a legitimate "no results"
+                total_hits = data['result']['hits'].get('@total', 0) if isinstance(data['result']['hits'], dict) else 0
+                if total_hits == 0:
+                    logger.debug(f"DBLP legitimately found 0 results for query: {query}")
+                else:
+                    logger.warning(f"DBLP found {total_hits} hits but failed to parse any results")
+            
             return results
             
         except requests.exceptions.RequestException as e:

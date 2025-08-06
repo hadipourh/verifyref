@@ -501,11 +501,11 @@ def verify_references(pdf_path: str, output_file: str = None, output_format: str
         console.print("[red]❌ Configuration validation failed[/red]")
         sys.exit(1)
     
-    # Initialize components
+    # Initialize components with fast mode for better performance
     config = get_config()
     grobid_client = GrobidClient()
     parser = ReferenceParser()
-    verifier = MultiDatabaseVerifier()
+    verifier = MultiDatabaseVerifier(fast_mode=True)  # Enable fast mode for better performance
     classifier = ReferenceClassifier()
     
     # Extract references using GROBID
@@ -594,7 +594,7 @@ def verify_references(pdf_path: str, output_file: str = None, output_format: str
             return create_error_result(i, ref, f'Processing error: {str(e)}')
     
     # Use parallel processing for better performance
-    max_workers = min(4, len(references))  # Limit to 4 threads to avoid overwhelming APIs
+    max_workers = min(8, len(references))  # Limit to 8 threads for optimal parallel processing
     
     with Progress(
         SpinnerColumn(),

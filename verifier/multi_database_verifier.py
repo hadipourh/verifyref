@@ -39,15 +39,17 @@ class MultiDatabaseVerifier:
     Coordinator for verifying references across multiple academic databases
     """
     
-    def __init__(self, enable_cryptodb: bool = True):
+    def __init__(self, enable_cryptodb: bool = True, fast_mode: bool = False):
         """
         Initialize multi-database verifier
         
         Args:
             enable_cryptodb: Whether to enable CryptoDB author verification
+            fast_mode: Whether to use fast mode for databases (fewer search strategies)
         """
         self.enabled_databases = DATABASE_CONFIG.get("enabled_databases", ["semantic_scholar"])
         self.primary_database = DATABASE_CONFIG.get("primary_database", "semantic_scholar")
+        self.fast_mode = fast_mode  # Store fast mode setting
         
         # Initialize clients
         self.clients = {}
@@ -61,7 +63,8 @@ class MultiDatabaseVerifier:
             self.clients["semantic_scholar"] = SemanticScholarClient()
         
         if "dblp" in self.enabled_databases and DATABASE_CONFIG.get("dblp", {}).get("enabled", True):
-            self.clients["dblp"] = DBLPClient()
+            # Use fast mode for DBLP to improve performance
+            self.clients["dblp"] = DBLPClient(fast_mode=fast_mode)
         
         if "crossref" in self.enabled_databases and DATABASE_CONFIG.get("crossref", {}).get("enabled", True):
             email = DATABASE_CONFIG.get("crossref", {}).get("email")
