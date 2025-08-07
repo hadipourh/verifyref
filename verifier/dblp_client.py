@@ -336,8 +336,18 @@ class DBLPClient:
         """Extract meaningful keywords from title, handling hyphenated terms intelligently"""
         import re
         
+        # First, apply compound word detection to generate hyphenated versions
+        title_variations = self._generate_title_variations(title)
+        
+        # Use the first variation (original) and second variation (if it has more hyphens)
+        best_title = title_variations[0]
+        if len(title_variations) > 1:
+            # Check if the second variation has more hyphenated terms
+            if title_variations[1].count('-') > best_title.count('-'):
+                best_title = title_variations[1]
+        
         # Split into words
-        words = title.split()
+        words = best_title.split()
         
         # Common stop words to ignore
         stop_words = {
