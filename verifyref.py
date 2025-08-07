@@ -61,6 +61,8 @@ from utils.terminal_display import display_verification_summary
 
 # Initialize rich console
 console = Console()
+# Separate console for progress bars printed to stderr to avoid mixing with stdout output
+progress_console = Console(stderr=True)
 
 # Initialize logger
 logger = logging.getLogger(__name__)
@@ -210,7 +212,7 @@ def verify_references(input_path: str, output_file: str = None, output_format: s
     with Progress(
         SpinnerColumn(),
         TextColumn("[bold blue]{task.description}"),
-        console=console
+        console=progress_console
     ) as progress:
         if input_type == 'pdf':
             extract_task = progress.add_task("📄 Extracting references from PDF...", total=None)
@@ -320,7 +322,7 @@ def verify_references(input_path: str, output_file: str = None, output_format: s
         BarColumn(),
         TaskProgressColumn(),
         TimeRemainingColumn(),
-        console=console,
+        console=progress_console,
         transient=False
     ) as progress:
         

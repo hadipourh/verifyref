@@ -303,14 +303,18 @@ class ReferenceClassifier:
                 total_ref_authors = len(ref_authors)
                 
                 if total_ref_authors > 0:
-                    # Enhanced similarity based on CryptoDB canonical matches
+                    # Calculate both similarities
                     cryptodb_similarity = matched_count / total_ref_authors
-                    
-                    # Combine with traditional similarity (weighted average)
                     traditional_similarity = calculate_author_similarity(ref_authors, paper_author_names)
                     
-                    # Give more weight to CryptoDB results for crypto papers
-                    return 0.7 * cryptodb_similarity + 0.3 * traditional_similarity
+                    # Only use CryptoDB enhancement if it improves the similarity
+                    # This prevents CryptoDB from reducing similarity when it doesn't find matches
+                    if cryptodb_similarity > traditional_similarity:
+                        # Give more weight to CryptoDB results for crypto papers
+                        return 0.7 * cryptodb_similarity + 0.3 * traditional_similarity
+                    else:
+                        # Use traditional similarity if CryptoDB doesn't improve it
+                        return traditional_similarity
         
         # Fallback to traditional author matching
         return calculate_author_similarity(ref_authors, paper_author_names)
@@ -807,8 +811,27 @@ class ReferenceClassifier:
         if not ai_verification:
             return classification, confidence, reasons
         
-        # Weight for AI analysis - increased slightly to catch fraud
-        ai_weight = min(0.2, self.ai_verifier.get_verification_weight() if self.ai_verifier else 0.2)
+        # Dynamic AI weight based on AI confidence and decision quality
+        base_ai_weight = min(0.2, self.ai_verifier.get_verification_weight() if self.ai_verifier else 0.2)
+        
+        # Increase AI weight for very positive decisions
+        if (ai_verification.is_authentic and 
+            ai_verification.confidence > 0.8 and 
+            len(ai_verification.positive_indicators) >= 2):
+            # Very positive AI decision - increase weight significantly
+            ai_weight = min(0.35, base_ai_weight * 1.75)
+        elif (ai_verification.is_authentic and 
+              ai_verification.confidence > 0.75 and 
+              len(ai_verification.positive_indicators) >= 1):
+            # Moderately positive AI decision - increase weight moderately
+            ai_weight = min(0.3, base_ai_weight * 1.5)
+        elif ai_verification.confidence > 0.8:
+            # High confidence in any decision - increase weight slightly
+            ai_weight = min(0.25, base_ai_weight * 1.25)
+        else:
+            # Standard weight for normal decisions
+            ai_weight = base_ai_weight
+            
         traditional_weight = 1.0 - ai_weight
         
         # Map AI authenticity to our classification system
@@ -826,9 +849,24 @@ class ReferenceClassifier:
         
         # SLIGHTLY PESSIMISTIC combination - give AI fraud detection more weight
         if classification == ai_classification:
-            # Both agree - good confidence boost
-            new_confidence = min(1.0, confidence + 0.07)  # Slightly increased
-            new_reasons = reasons + [f"AI analysis confirms: {ai_verification.reasoning[:80]}..."]
+            # Both agree - confidence boost varies based on AI strength
+            if (ai_verification.is_authentic and 
+                ai_verification.confidence > 0.8 and 
+                len(ai_verification.positive_indicators) >= 2):
+                # Very strong AI positive decision - significant boost
+                confidence_boost = 0.12
+                new_reasons = reasons + [f"AI strongly confirms authenticity: {ai_verification.reasoning[:80]}..."]
+            elif (ai_verification.is_authentic and 
+                  ai_verification.confidence > 0.75):
+                # Strong AI positive decision - good boost
+                confidence_boost = 0.09
+                new_reasons = reasons + [f"AI confirms with high confidence: {ai_verification.reasoning[:80]}..."]
+            else:
+                # Standard agreement boost
+                confidence_boost = 0.07
+                new_reasons = reasons + [f"AI analysis confirms: {ai_verification.reasoning[:80]}..."]
+            
+            new_confidence = min(1.0, confidence + confidence_boost)
         elif classification == ClassificationResult.AUTHENTIC and ai_classification != ClassificationResult.AUTHENTIC:
             # Traditional says authentic, AI disagrees - take AI concerns seriously
             if ai_verification.confidence > 0.7 and len(ai_verification.red_flags) >= 1:  # Lowered threshold
@@ -842,9 +880,19 @@ class ReferenceClassifier:
                 new_confidence = confidence * 0.9
                 new_reasons = reasons + ["AI suggests caution warranted"]
         elif classification != ClassificationResult.AUTHENTIC and ai_classification == ClassificationResult.AUTHENTIC:
-            # Traditional says problematic, AI says authentic - moderate slightly
-            if ai_verification.confidence > 0.75:  # Raised threshold for AI override
-                # AI suggests legitimacy - moderate the negative classification
+            # Traditional says problematic, AI says authentic - consider AI strength
+            ai_override_threshold = 0.75
+            
+            # Lower threshold for very positive AI decisions
+            if (ai_verification.confidence > 0.8 and 
+                len(ai_verification.positive_indicators) >= 2):
+                ai_override_threshold = 0.65  # More willing to trust very positive AI
+            elif (ai_verification.confidence > 0.75 and 
+                  len(ai_verification.positive_indicators) >= 1):
+                ai_override_threshold = 0.7   # Moderately more willing to trust positive AI
+            
+            if ai_verification.confidence > ai_override_threshold:
+                # AI suggests legitimacy with sufficient confidence
                 if classification == ClassificationResult.FABRICATED:
                     new_classification = ClassificationResult.SUSPICIOUS
                 elif classification == ClassificationResult.AUTHOR_MANIPULATION:
@@ -852,7 +900,13 @@ class ReferenceClassifier:
                 else:
                     new_classification = classification  # Keep suspicious as is
                 
-                new_confidence = traditional_weight * confidence * 0.85 + ai_weight * ai_verification.confidence
+                # Higher AI weight for very positive decisions
+                ai_influence = ai_weight * ai_verification.confidence
+                if (ai_verification.confidence > 0.8 and 
+                    len(ai_verification.positive_indicators) >= 2):
+                    ai_influence *= 1.2  # Boost influence for very positive AI
+                
+                new_confidence = traditional_weight * confidence * 0.85 + ai_influence
                 new_reasons = reasons + [f"AI suggests legitimacy: {ai_verification.reasoning[:70]}..."]
             else:
                 new_classification = classification

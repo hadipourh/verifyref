@@ -28,7 +28,7 @@ from typing import Dict, Any
 
 # REQUIRED: Email for CrossRef API access (used for database identification)
 # Set your email address here for proper API usage
-CROSSREF_EMAIL = "your.email@domain.com"  # ← CHANGE THIS
+CROSSREF_EMAIL = "hsn.hadipour@gmail.com"  # ← CHANGE THIS
 
 # OPTIONAL: API Keys for enhanced functionality
 # Leave empty ("") if you don't have these keys - the tool will work without them
@@ -39,7 +39,7 @@ SEMANTIC_SCHOLAR_API_KEY = ""  # ← Add your key here
 
 # OpenAI API Key (only needed for AI-powered fraud detection)
 # Get it from: https://platform.openai.com/api-keys
-OPENAI_API_KEY = ""  # ← Add your key here
+OPENAI_API_KEY = "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"  # ← Add your key here
 
 # NCBI/PubMed API Key (optional, for higher PubMed rate limits)
 # Get it from: https://www.ncbi.nlm.nih.gov/account/settings/

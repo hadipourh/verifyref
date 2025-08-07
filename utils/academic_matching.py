@@ -169,8 +169,8 @@ def clean_author_name(author: str) -> str:
     
     cleaned = str(author).strip()
     
-    # Remove all common database artifacts in one pass
-    cleaned = re.sub(r'(\s+|(?<=\w))0\d{3}$', '', cleaned)  # " 0001" or "Name0001"
+    # Remove DBLP disambiguation numbers (e.g., " 0001", " 0002", etc.)
+    cleaned = re.sub(r'\s+\d{4}$', '', cleaned)             # " 0001", " 0002"
     cleaned = re.sub(r'\s+\(\d+\)$', '', cleaned)           # " (1)", " (2)"
     cleaned = re.sub(r'\s+\[\d+\]$', '', cleaned)           # " [1]", " [2]"
     

@@ -67,21 +67,31 @@ def apply_runtime_config(args):
         DATABASE_CONFIG['ai_verification']['enabled'] = ai_enabled
     
     if ai_enabled:
-        # Validate API key if AI is enabled
+        # Validate API key if AI is enabled - check environment first, then config.py
         api_key = os.getenv('OPENAI_API_KEY')
         if not api_key:
-            raise ValueError("OpenAI API key required for AI verification. Set OPENAI_API_KEY environment variable.")
+            # Try to get API key from config.py
+            try:
+                from config import OPENAI_API_KEY
+                api_key = OPENAI_API_KEY
+            except ImportError:
+                pass
+        
+        if not api_key:
+            raise ValueError("OpenAI API key required for AI verification. Set OPENAI_API_KEY environment variable or configure it in config.py.")
         
         if not validate_openai_api_key(api_key):
-            raise ValueError("Invalid OpenAI API key format. Please check your OPENAI_API_KEY environment variable.")
+            raise ValueError("Invalid OpenAI API key format. Please check your OPENAI_API_KEY environment variable or config.py setting.")
         
-        CLASSIFICATION_CONFIG['ai_verification']['api_key'] = api_key
+        DATABASE_CONFIG['ai_verification']['openai_api_key'] = api_key
         logger.info("AI verification enabled with OpenAI API")
     else:
         logger.info("AI verification disabled (default)")
 
 def setup_logging(verbose=False):
     """Setup logging configuration"""
+    import sys
+    
     level = logging.DEBUG if verbose else logging.INFO
     
     # Create custom formatter
@@ -98,8 +108,8 @@ def setup_logging(verbose=False):
     for handler in root_logger.handlers[:]:
         root_logger.removeHandler(handler)
     
-    # Add console handler
-    console_handler = logging.StreamHandler()
+    # Add console handler - use stdout for main logging
+    console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(level)
     console_handler.setFormatter(formatter)
     root_logger.addHandler(console_handler)
