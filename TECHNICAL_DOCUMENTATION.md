@@ -1,10 +1,10 @@
 # VerifyRef Technical Documentation
 
-> **Last Updated**: August 07, 2025  
+> **Last Updated**: January 2025  
 > **Version**: 1.0.0  
-> **Total Lines of Code**: ~1,872,559  
-> **Last Commit**: f8b9fea5 - enhance reference extractor: titles are extracted more accurately now  
-> **Author**: Technical analysis of the VerifyRef codebase
+> **Architecture**: Modular utility-based design  
+> **Main Entry Point**: `verifyref.py` (~1,119 lines)  
+> **Author**: Hosein Hadipour <hsn.hadipour@gmail.com>
 ## Table of Contents
 
 1. [Architecture Overview](#architecture-overview)
@@ -26,16 +26,27 @@ VerifyRef follows a **sophisticated multi-stage pipeline architecture** with **p
 
 ### High-Level Pipeline
 ```
-PDF Input → GROBID Extraction → Reference Parsing → Multi-DB Verification → Classification → Fraud Detection → AI Analysis → Report Generation
+Input Detection → GROBID Processing → Reference Parsing → Multi-DB Verification → Classification → Fraud Detection → AI Analysis → Output Formatting → Terminal/File Display
+```
+
+**Modular Processing Flow**:
+```
+utils/input_parser.py    → Input type detection and GROBID processing
+extractor/               → Reference extraction and normalization  
+verifier/               → Multi-database verification and classification
+utils/output_handler.py → File output and format handling
+utils/terminal_display.py → Rich-formatted terminal presentation
 ```
 
 ### Core Design Principles
 
-1. **Performance-First Design**: Parallel processing, caching, connection pooling
-2. **Context-Aware Processing**: Domain-specific optimization for CS/Bio papers
-3. **Multi-layered Verification**: Traditional similarity + AI analysis + pattern recognition
-4. **Thread-Safe Architecture**: Proper locking for concurrent operations
-5. **Configurable Rigor**: Adjustable sensitivity for different use cases
+1. **Modular Architecture**: Specialized utility modules for input, output, and configuration
+2. **Performance-First Design**: Parallel processing, caching, connection pooling
+3. **Context-Aware Processing**: Domain-specific optimization for CS/Bio papers
+4. **Multi-layered Verification**: Traditional similarity + AI analysis + pattern recognition
+5. **Thread-Safe Architecture**: Proper locking for concurrent operations
+6. **Configurable Rigor**: Adjustable sensitivity for different use cases
+7. **Clean Separation**: Terminal formatting isolated from file outputs
 
 ---
 
@@ -43,11 +54,24 @@ PDF Input → GROBID Extraction → Reference Parsing → Multi-DB Verification 
 
 ### 1. Entry Point & CLI (`verifyref.py`)
 
-**Location**: `/verifyref.py` (1,453 lines)
+**Location**: `/verifyref.py` (~1,119 lines)
 
 **Key Responsibilities**:
 - CLI argument parsing and validation
 - Runtime configuration management
+- Main workflow orchestration
+- Import and delegation to utility modules
+
+**Modular Architecture**: The main file now imports specialized utilities:
+- `utils.input_parser`: Input type detection and parsing
+- `utils.output_handler`: File output and format handling  
+- `utils.config_utils`: Configuration management
+- `utils.terminal_display`: Rich-based terminal formatting
+
+**Core Functions**:
+- `verify_flexible_input()`: Main verification workflow
+- `cached_database_search()`: Search with intelligent caching
+- `main()`: CLI entry point with argument processing
 - Orchestrates the entire verification pipeline
 - Performance monitoring and reporting
 
@@ -121,7 +145,43 @@ def parse_single_reference(self, reference: Dict[str, Any], index: int = 0) -> O
 - Confidence scoring based on field completeness
 - Parsing notes for debugging and quality assessment
 
-### 4. Multi-Database Verification (`verifier/multi_database_verifier.py`)
+### 4. Utility Modules (`utils/`)
+
+The utility modules provide specialized functionality for different aspects of the verification workflow:
+
+#### 4.1. Input Processing (`utils/input_parser.py`)
+
+**Key Functions**:
+- `detect_input_type()`: Automatically detects PDF, text file, or single reference
+- `parse_single_reference_to_raw()`: Processes single reference strings via GROBID
+- `parse_text_file_to_raw()`: Handles text files with multiple references
+
+**GROBID Integration**: Uses the `processCitation` endpoint for consistent parsing across all input types.
+
+#### 4.2. Output Management (`utils/output_handler.py`)
+
+**Key Functions**:
+- `save_results()`: Handles file output with format detection
+- `determine_output_format()`: Auto-detects format from file extension
+- `make_json_serializable()`: Converts complex objects to JSON-compatible format
+
+**Rich Console Integration**: Maintains separate console instances for terminal vs file output to prevent formatting leakage.
+
+#### 4.3. Configuration Utilities (`utils/config_utils.py`)
+
+**Key Functions**:
+- `validate_openai_api_key()`: Validates OpenAI API credentials
+- `apply_runtime_config()`: Applies command-line configuration overrides
+- `setup_logging()`: Configures Rich-compatible logging
+
+#### 4.4. Terminal Display (`utils/terminal_display.py`)
+
+**Key Functions**:
+- `display_verification_summary()`: Rich-formatted terminal output only
+- Prevents table formatting from leaking into file outputs
+- Maintains clean separation between terminal and file presentation
+
+### 5. Multi-Database Verification (`verifier/multi_database_verifier.py`)
 
 **Location**: `/verifier/multi_database_verifier.py` (361 lines)
 

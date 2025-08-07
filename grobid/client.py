@@ -52,9 +52,58 @@ class GrobidClient:
         # Ensure base URL doesn't end with slash
         self.base_url = self.base_url.rstrip('/')
         
-        logger.info(f"GROBID client initialized with enhanced options: "
+        logger.info(f"GROBID initialized - base_url={self.base_url}, timeout={self.timeout}, "
                    f"consolidation={self.use_consolidation}, "
                    f"raw_citations={self.include_raw_citations}")
+    
+    def parse_citation_string(self, citation_text: str) -> Optional[Dict[str, Any]]:
+        """
+        Parse a single citation string using GROBID's processCitation endpoint
+        
+        Args:
+            citation_text: A single citation string to parse
+            
+        Returns:
+            Dictionary in the same format as extract_references output, or None if parsing fails
+        """
+        if not citation_text or not citation_text.strip():
+            return None
+            
+        try:
+            # Use GROBID's processCitation endpoint
+            endpoint = f"{self.base_url}/api/processCitation"
+            
+            data = {
+                'citations': citation_text.strip(),
+                'consolidateCitations': '1' if self.use_consolidation else '0'
+            }
+            
+            response = requests.post(
+                endpoint,
+                data=data,
+                timeout=self.timeout,
+                headers={'Content-Type': 'application/x-www-form-urlencoded'}
+            )
+            
+            if response.status_code == 200:
+                # Parse the XML response
+                parsed_citation = self._parse_citation_xml(response.text, citation_text)
+                if parsed_citation:
+                    logger.debug(f"Successfully parsed citation: {citation_text[:60]}...")
+                    return parsed_citation
+                else:
+                    logger.warning(f"Failed to parse citation XML response")
+                    return None
+            else:
+                logger.error(f"GROBID processCitation failed with status {response.status_code}: {response.text}")
+                return None
+                
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Failed to connect to GROBID for citation parsing: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Error parsing citation with GROBID: {e}")
+            return None
         
     def is_available(self) -> bool:
         """
@@ -203,6 +252,63 @@ class GrobidClient:
             
         logger.info(f"Extracted {len(references)} references from GROBID response")
         return references
+    
+    def _parse_citation_xml(self, xml_content: str, original_text: str) -> Optional[Dict[str, Any]]:
+        """
+        Parse GROBID processCitation XML response into our standard format
+        
+        Args:
+            xml_content: XML response from GROBID processCitation
+            original_text: Original citation text
+            
+        Returns:
+            Dictionary in the same format as extract_references output
+        """
+        try:
+            # Parse XML
+            root = ET.fromstring(xml_content)
+            
+            # Handle namespace (GROBID uses TEI namespace)
+            namespace = ''
+            if root.tag.startswith('{'):
+                namespace = root.tag[:root.tag.index('}')+1]
+            
+            # Create base reference structure
+            reference = {
+                'raw_text': original_text,
+                'title': '',
+                'authors': [],
+                'venue': '',
+                'year': None,
+                'volume': '',
+                'issue': '',
+                'pages': '',
+                'doi': '',
+                'isbn': '',
+                'url': '',
+                'confidence_indicators': {}
+            }
+            
+            # Extract data using existing helper method
+            extracted_ref = self._extract_reference_data(root, namespace, True)
+            if extracted_ref:
+                # Merge the extracted data but keep our original raw_text
+                reference.update(extracted_ref)
+                reference['raw_text'] = original_text
+            
+            # Ensure we have some basic information
+            if not reference['title'] and not reference['authors']:
+                logger.warning("Parsed citation lacks both title and authors")
+                return None
+                
+            return reference
+            
+        except ET.ParseError as e:
+            logger.error(f"Failed to parse GROBID citation XML: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Error processing GROBID citation response: {e}")
+            return None
     
     def _extract_reference_data(self, biblio_elem: ET.Element, namespace: str = '', 
                               include_raw_citations: bool = True) -> Optional[Dict[str, Any]]:

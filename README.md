@@ -243,33 +243,37 @@ done
 
 ```
 verifyref/
-├── verifyref.py                 # Main CLI tool
+├── verifyref.py                 # Main CLI entry point (~1,119 lines)
 ├── config.py                    # Configuration (edit API keys here)
 ├── requirements.txt             # Dependencies
 ├── Dockerfile                   # Container setup
 ├── grobid/
-│   └── client.py               # PDF extraction
+│   └── client.py               # PDF extraction and GROBID integration
 ├── extractor/
-│   └── reference_parser.py     # Reference parsing
+│   └── reference_parser.py     # Reference parsing and normalization
 ├── verifier/
-│   ├── multi_database_verifier.py  # Main coordinator
-│   ├── openalex_client.py          # Primary database
-│   ├── dblp_client.py              # Computer Science
-│   ├── pubmed_client.py            # Biomedical
-│   ├── iacr_client.py              # Cryptography
-│   ├── arxiv_client.py             # Preprints
+│   ├── multi_database_verifier.py  # Main verification coordinator
+│   ├── openalex_client.py          # Primary academic database
+│   ├── dblp_client.py              # Computer Science literature
+│   ├── pubmed_client.py            # Biomedical literature
+│   ├── iacr_client.py              # Cryptography research
+│   ├── arxiv_client.py             # Preprint repository
 │   ├── springer_client.py          # Springer Nature STM
-│   ├── semantic_scholar.py         # Academic search
-│   ├── crossref_client.py          # DOI resolution
+│   ├── semantic_scholar.py         # Academic search engine
+│   ├── crossref_client.py          # DOI resolution service
 │   ├── classifier.py               # Authenticity classification
-│   ├── ai_verifier.py              # AI-powered analysis
-│   └── cryptodb_author_client.py   # CryptoDB verification
+│   ├── ai_verifier.py              # AI-powered fraud detection
+│   └── cryptodb_author_client.py   # CryptoDB author verification
 ├── utils/
-│   ├── helpers.py              # Common utilities
-│   ├── academic_matching.py    # Venue/author matching
-│   └── report_generator.py     # Output formatting
+│   ├── helpers.py              # Common utilities and helpers
+│   ├── academic_matching.py    # Venue and author matching algorithms
+│   ├── report_generator.py     # Output formatting and report generation
+│   ├── input_parser.py         # Input type detection and parsing
+│   ├── output_handler.py       # File output and format handling
+│   ├── config_utils.py         # Configuration management utilities
+│   └── terminal_display.py     # Rich-based terminal output formatting
 └── tests/
-    ├── test_verifier.py        # Verification tests
+    ├── test_verifier.py        # Verification system tests
     └── test_grobid.py          # PDF processing tests
 ```
 

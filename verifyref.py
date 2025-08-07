@@ -44,7 +44,7 @@ from rich.text import Text
 from rich import box
 
 # Import our modules
-from config import validate_config, get_config, DATABASE_CONFIG
+from config import validate_config, get_config, DATABASE_CONFIG, CLASSIFICATION_CONFIG
 from grobid.client import GrobidClient
 from extractor.reference_parser import ReferenceParser
 from verifier.semantic_scholar import SemanticScholarClient
@@ -54,9 +54,16 @@ from utils.report_generator import generate_human_readable_report
 from utils.summary_data import get_verification_summary_data
 from utils.helpers import calculate_text_similarity, normalize_text
 from utils.academic_matching import clean_author_name
+from utils.input_parser import detect_input_type, parse_single_reference_to_raw, parse_text_file_to_raw
+from utils.output_handler import save_results, determine_output_format, make_json_serializable
+from utils.config_utils import validate_openai_api_key, apply_runtime_config, setup_logging
+from utils.terminal_display import display_verification_summary
 
 # Initialize rich console
 console = Console()
+
+# Initialize logger
+logger = logging.getLogger(__name__)
 
 # Performance optimization: Thread-safe cache for database search results
 _search_cache = {}
@@ -151,158 +158,25 @@ def cached_database_search(verifier: MultiDatabaseVerifier, parsed_ref: Dict[str
     
     return verification_results
 
-def validate_openai_api_key(api_key: str) -> bool:
-    """Validate OpenAI API key by making a simple API call"""
-    if not api_key or api_key == "your-openai-api-key-here":
-        return False
-    
-    try:
-        import openai
-        
-        # Create a client with the provided API key
-        client = openai.OpenAI(api_key=api_key)
-        
-        # Make a minimal API call to test the key
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",  # Use the cheapest model for testing
-            messages=[{"role": "user", "content": "test"}],
-            max_tokens=1,  # Minimal token usage
-            timeout=10  # Quick timeout
-        )
-        return True
-        
-    except Exception as e:
-        # Log the specific error for debugging but don't expose it to user
-        logging.debug(f"API key validation failed: {e}")
-        return False
-
-def apply_runtime_config(args):
-    """Apply runtime configuration overrides from command line arguments"""
-    from config import CLASSIFICATION_CONFIG, DATABASE_CONFIG, set_rigor_level
-    
-    # Apply rigor level
-    if args.rigor:
-        set_rigor_level(args.rigor)
-        console.print(f"[blue]🔧 Rigor level set to: {args.rigor}[/blue]")
-    
-    # Apply individual overrides
-    if args.similarity_threshold is not None:
-        if 0.0 <= args.similarity_threshold <= 1.0:
-            CLASSIFICATION_CONFIG["similarity_threshold"] = args.similarity_threshold
-            console.print(f"[blue]🔧 Similarity threshold set to: {args.similarity_threshold}[/blue]")
-        else:
-            console.print("[red]❌ Similarity threshold must be between 0.0 and 1.0[/red]")
-            sys.exit(1)
-    
-    # Handle AI verification flag (AI is disabled by default)
-    if args.enable_ai:
-        if "ai_verification" in DATABASE_CONFIG:
-            # Check for API key
-            api_key = DATABASE_CONFIG["ai_verification"].get("openai_api_key") or os.getenv("OPENAI_API_KEY")
-            
-            if not api_key:
-                console.print("[red]❌ Cannot enable AI verification: No OpenAI API key found[/red]")
-                console.print("[yellow]   • Set OPENAI_API_KEY in config.py (recommended), or[/yellow]")
-                console.print("[yellow]   • Set OPENAI_API_KEY environment variable[/yellow]")
-                console.print("[blue]🔧 AI verification remains disabled[/blue]")
-            elif not validate_openai_api_key(api_key):
-                console.print("[red]❌ Cannot enable AI verification: Invalid or expired OpenAI API key[/red]")
-                console.print("[yellow]   • Check your API key at https://platform.openai.com/api-keys[/yellow]")
-                console.print("[yellow]   • Ensure your account has sufficient credits[/yellow]")
-                console.print("[blue]🔧 AI verification remains disabled[/blue]")
-            else:
-                DATABASE_CONFIG["ai_verification"]["enabled"] = True
-                console.print("[green]🔧 AI verification enabled with valid API key[/green]")
-    
-    # Disable fraud detection if requested
-    if args.disable_fraud_detection:
-        CLASSIFICATION_CONFIG["enable_fraud_detection"] = False
-        console.print("[blue]🔧 Fraud detection disabled[/blue]")
-    
-    # Require multi-database if requested
-    if args.require_multi_db:
-        CLASSIFICATION_CONFIG["multi_database_requirement"] = True
-        console.print("[blue]🔧 Multi-database requirement enabled[/blue]")
-
-def setup_logging(verbose=False):
-    """Setup logging configuration with Rich compatibility"""
-    level = logging.DEBUG if verbose else logging.INFO
-    
-    # Create a custom handler that works with Rich
-    from rich.logging import RichHandler
-    
-    # Clear any existing handlers
-    logging.getLogger().handlers = []
-    
-    # Configure logging with RichHandler
-    logging.basicConfig(
-        level=level,
-        format='%(message)s',
-        datefmt='%H:%M:%S',
-        handlers=[RichHandler(console=console, show_time=True, show_path=False)]
-    )
-    
-    # Reduce verbosity of some loggers
-    logging.getLogger('urllib3').setLevel(logging.WARNING)
-    logging.getLogger('requests').setLevel(logging.WARNING)
-
-def make_json_serializable(data):
-    """Convert data to JSON-serializable format"""
-    if hasattr(data, 'to_dict'):
-        return data.to_dict()
-    elif isinstance(data, dict):
-        return {k: make_json_serializable(v) for k, v in data.items()}
-    elif isinstance(data, list):
-        return [make_json_serializable(item) for item in data]
-    elif hasattr(data, '__dict__'):
-        # For any object with __dict__, convert to dict representation
-        return make_json_serializable(data.__dict__)
-    else:
-        # For basic types (str, int, float, bool, None)
-        return data
-
-def determine_output_format(output_file: str, output_format: str = None) -> str:
-    """Determine output format from file extension or explicit format"""
-    if output_format:
-        return output_format.lower()
-    
-    if output_file:
-        ext = Path(output_file).suffix.lower()
-        if ext == '.json':
-            return 'json'
-        elif ext == '.txt':
-            return 'txt'
-    
-    # Default to JSON
-    return 'json'
-
-def save_results(results: Dict[str, Any], output_file: str, output_format: str, classifier=None):
-    """Save results in the specified format"""
-    try:
-        if output_format == 'json':
-            # Convert to JSON-serializable format
-            json_safe_results = make_json_serializable(results)
-            with open(output_file, 'w', encoding='utf-8') as f:
-                json.dump(json_safe_results, f, indent=2, ensure_ascii=False)
-        
-        elif output_format == 'txt':
-            # Generate human-readable report
-            report = generate_human_readable_report(results, classifier)
-            with open(output_file, 'w', encoding='utf-8') as f:
-                f.write(report)
-        
-        else:
-            raise ValueError(f"Unsupported output format: {output_format}")
-        
-        console.print(f"[green]📊 Results saved to: {output_file} ({output_format.upper()} format)[/green]")
-        
-    except Exception as e:
-        console.print(f"[red]❌ Error saving results: {e}[/red]")
-        raise
-
-def verify_references(pdf_path: str, output_file: str = None, output_format: str = None, verbose: bool = False):
+def verify_flexible_input(input_str: str, output_file: str = None, output_format: str = None, verbose: bool = False):
     """
-    Enhanced reference verification with parallel processing optimization.
+    Verify references from flexible input (auto-detects input type)
+    
+    This function now simply calls the unified verify_references function.
+    
+    Args:
+        input_str: Input string (PDF path, text file path, or single reference string)
+        output_file: Optional output file path
+        output_format: Optional output format (json/txt)
+        verbose: Enable verbose output
+    """
+    # Simply call the unified verification function
+    verify_references(input_str, output_file, output_format, verbose)
+
+def verify_references(input_path: str, output_file: str = None, output_format: str = None, verbose: bool = False):
+    """
+    Unified reference verification with parallel processing optimization.
+    Supports PDF files, text files, and single reference strings.
     
     Major performance improvements:
     - Parallel database verification (up to 4x faster for multiple references)
@@ -330,25 +204,47 @@ def verify_references(pdf_path: str, output_file: str = None, output_format: str
     verifier = MultiDatabaseVerifier(fast_mode=True)  # Enable fast mode for better performance
     classifier = ReferenceClassifier()
     
-    # Extract references using GROBID
+    # Detect input type and extract/parse references accordingly
+    input_type = detect_input_type(input_path)
+    
     with Progress(
         SpinnerColumn(),
         TextColumn("[bold blue]{task.description}"),
         console=console
     ) as progress:
-        extract_task = progress.add_task("📄 Extracting references from PDF...", total=None)
-        
-        try:
-            references = grobid_client.extract_references(pdf_path)
-            if not references:
-                console.print("[red]❌ Failed to extract references from PDF[/red]")
+        if input_type == 'pdf':
+            extract_task = progress.add_task("📄 Extracting references from PDF...", total=None)
+            try:
+                references = grobid_client.extract_references(input_path)
+                if not references:
+                    console.print("[red]❌ Failed to extract references from PDF[/red]")
+                    sys.exit(1)
+                console.print(f"[green]📚 Extracted {len(references)} references from PDF[/green]")
+            except Exception as e:
+                console.print(f"[red]❌ Error processing PDF: {e}[/red]")
                 sys.exit(1)
-            
-            console.print(f"[green]📚 Extracted {len(references)} references[/green]")
-            
-        except Exception as e:
-            console.print(f"[red]❌ Error processing PDF: {e}[/red]")
-            sys.exit(1)
+                
+        elif input_type == 'text_file':
+            extract_task = progress.add_task("📝 Parsing references from text file...", total=None)
+            try:
+                references = parse_text_file_to_raw(input_path)
+                if not references:
+                    console.print("[red]❌ No valid references found in text file[/red]")
+                    sys.exit(1)
+                console.print(f"[green]📚 Extracted {len(references)} references from text file[/green]")
+            except Exception as e:
+                console.print(f"[red]❌ Error processing text file: {e}[/red]")
+                sys.exit(1)
+                
+        else:  # single_reference
+            extract_task = progress.add_task("✏️ Parsing single reference...", total=None)
+            try:
+                single_ref = parse_single_reference_to_raw(input_path)
+                references = [single_ref]
+                console.print(f"[green]📚 Parsed single reference[/green]")
+            except Exception as e:
+                console.print(f"[red]❌ Error parsing single reference: {e}[/red]")
+                sys.exit(1)
     
     # Optimized reference verification with parallel processing
     verified_references = []
@@ -362,7 +258,7 @@ def verify_references(pdf_path: str, output_file: str = None, output_format: str
         error_result = VerificationResult(
             classification=ClassificationResult.INCONCLUSIVE,
             confidence=0.0, similarity_score=0.0, matched_paper=None,
-            reasons=[error_reason]
+            reasons=[error_reason], details={}
         )
         return {
             'index': index, 'original': ref, 'parsed': None,
@@ -424,7 +320,8 @@ def verify_references(pdf_path: str, output_file: str = None, output_format: str
         BarColumn(),
         TaskProgressColumn(),
         TimeRemainingColumn(),
-        console=console
+        console=console,
+        transient=False
     ) as progress:
         
         main_task = progress.add_task(
@@ -537,7 +434,7 @@ def verify_references(pdf_path: str, output_file: str = None, output_format: str
                         error_result = VerificationResult(
                             classification=ClassificationResult.INCONCLUSIVE,
                             confidence=0.0, similarity_score=0.0, matched_paper=None,
-                            reasons=[f'Processing error: {str(e)}']
+                            reasons=[f'Processing error: {str(e)}'], details={}
                         )
                         
                         verified_references.append({
@@ -556,13 +453,15 @@ def verify_references(pdf_path: str, output_file: str = None, output_format: str
     
     results = {
         'metadata': {
-            'pdf_file': pdf_path,
+            'input_source': input_path,
+            'input_type': input_type,
             'analysis_date': datetime.now().isoformat(),
             'total_references': len(references),
             'verifyref_version': '1.0.0'
         },
         'analysis_metadata': {
-            'pdf_file': pdf_path,
+            'input_source': input_path,
+            'input_type': input_type,
             'analysis_date': datetime.now().isoformat(),
             'total_references_found': len(references),
             'references_processed': len(verified_references)
@@ -573,7 +472,7 @@ def verify_references(pdf_path: str, output_file: str = None, output_format: str
     }
     
     # Display summary table
-    display_verification_summary(results['summary'], len(references))
+    display_verification_summary(results['summary'], len(references), console)
     
     # Show thread-safe performance statistics if caching was used
     with _cache_lock:
@@ -619,46 +518,12 @@ def verify_references(pdf_path: str, output_file: str = None, output_format: str
     if output_file:
         # Determine output format
         format_to_use = determine_output_format(output_file, output_format)
-        save_results(results, output_file, format_to_use, classifier)
+        save_results(results, output_file, format_to_use, classifier, console)
     else:
         # Generate human-readable report for console output
         report = generate_human_readable_report(results, classifier)
         console.print("\n" + "="*80)
         console.print(report)
-
-def display_verification_summary(summary: Dict[str, Any], total_refs: int):
-    """Display a beautiful summary table of verification results"""
-    
-    table = Table(title="[*] Verification Summary", box=box.ROUNDED)
-    table.add_column("Classification", style="bold", min_width=24)
-    table.add_column("Count", justify="right", min_width=5)
-    table.add_column("Percentage", justify="right", min_width=10)
-    table.add_column("Status", justify="center", min_width=6)
-    
-    # Get shared summary data
-    summary_data = get_verification_summary_data(summary)
-    
-    # Add rows with colors and monochrome hacker-style symbols
-    for item in summary_data:
-        color = item['color']
-        count = item['count']
-        percentage = item['percentage']
-        label = item['label']
-        
-        table.add_row(
-            f"[{color}]{label}[/{color}]", 
-            str(count), 
-            f"{percentage:6.1f}%",
-            f"[{color}]●[/{color}]" if count > 0 else "[dim]○[/dim]"
-        )
-    
-    console.print()
-    console.print(table)
-    
-    # Overall assessment from classifier
-    risk_assessment = summary.get('risk_assessment', '🔍 Inconclusive - More investigation needed')
-    console.print(f"\n{risk_assessment}")
-    console.print()
 
 def apply_context_filtering(results: List[Dict[str, Any]], context_type: str, verbose: bool = False) -> List[Dict[str, Any]]:
     """Apply context-aware filtering and boosting to search results"""
@@ -1154,6 +1019,11 @@ Examples:
   # Verify references in a PDF
   verifyref paper.pdf
   
+  # Flexible verification with auto-detection
+  verifyref --verify paper.pdf                                    # PDF file
+  verifyref --verify references.txt                               # Text file with references
+  verifyref --verify "Smith, J. (2020). Machine Learning. Nature."   # Single reference
+  
   # Search for a paper and generate BibTeX citation
   verifyref --cite "Autoguess A Tool for Finding Guess-and-Determine Attacks"
   verifyref --cite "A Geometric Approach to Linear Cryptanalysis"
@@ -1166,15 +1036,18 @@ Examples:
   
   # Save results as JSON
   verifyref paper.pdf --output results.json
+  verifyref --verify references.txt --output results.json
   
   # Save results as text report
   verifyref paper.pdf --output report.txt
+  verifyref --verify "Smith, J. (2020). Title." --output report.txt
   
   # Explicit format specification
   verifyref paper.pdf --output results --output-format txt
   
   # Verbose mode for detailed output
   verifyref paper.pdf --verbose
+  verifyref --verify references.txt --verbose
         """
     )
     
@@ -1182,6 +1055,7 @@ Examples:
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("file", nargs='?', type=str, help="Path to PDF file to analyze for reference verification")
     group.add_argument("--cite", type=str, help="Search for a paper by title/keywords and generate BibTeX citation")
+    group.add_argument("--verify", type=str, help="Verify a reference from text input (auto-detects: single reference string, text file, or PDF)")
     
     # Optional arguments - using more concise definitions
     args_config = [
@@ -1226,6 +1100,9 @@ Examples:
         elif args.cite:
             # Citation lookup mode
             search_and_cite(args.cite, args.context, args.output, args.output_format, args.verbose)
+        elif args.verify:
+            # Flexible verification mode with auto-detection
+            verify_flexible_input(args.verify, args.output, args.output_format, args.verbose)
         
     except KeyboardInterrupt:
         console.print("\n[yellow]⚠️ Operation cancelled by user[/yellow]")

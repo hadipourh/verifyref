@@ -23,17 +23,17 @@ from .summary_data import get_verification_summary_data
 logger = logging.getLogger(__name__)
 
 def generate_summary_table(summary: Dict[str, Any], total_refs: int) -> List[str]:
-    """Generate text-based summary table using same data as terminal output"""
+    """Generate clean text-based summary table for file output (no borders)"""
     lines = []
     
     # Get the same data used by the terminal display
     summary_data = get_verification_summary_data(summary)
     
-    # Create clean text version without borders
-    lines.append("Verification Summary")
+    # Create clean text version without borders for file output
+    lines.append("                 [*] Verification Summary")
     lines.append("")
-    lines.append("Classification              Count    Percentage    Status")
-    lines.append("-" * 60)
+    lines.append("Classification           Count  Percentage  Status")
+    lines.append("─────────────────────────────────────────────────")
     
     for item in summary_data:
         label = item['label']
@@ -41,15 +41,17 @@ def generate_summary_table(summary: Dict[str, Any], total_refs: int) -> List[str
         percentage = item['percentage']
         status = "●" if count > 0 else "○"
         
-        lines.append(f"{label:<27} {count:5d}    {percentage:6.1f}%        {status}")
+        # Format with proper spacing (no borders)
+        line = f"{label:<24} {count:5d}      {percentage:5.1f}%    {status}"
+        lines.append(line)
     
     lines.append("")
     
     # Add risk assessment if available  
     risk_assessment = summary.get('risk_assessment', '')
     if risk_assessment:
-        lines.append("")
         lines.append(f"{risk_assessment}")
+        lines.append("")
     
     return lines
 
