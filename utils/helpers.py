@@ -22,13 +22,14 @@ from typing import List, Optional, Union
 from difflib import SequenceMatcher
 import unicodedata
 
-def normalize_text(text: str) -> str:
+def normalize_text(text: str, preserve_hyphens: bool = True) -> str:
     """
     Normalize text for comparison by removing extra whitespace, 
     normalizing unicode, and standardizing case
     
     Args:
         text: Input text string
+        preserve_hyphens: Whether to preserve hyphens/dashes in the text (default: True)
         
     Returns:
         Normalized text string
@@ -48,9 +49,17 @@ def normalize_text(text: str) -> str:
     # Normalize whitespace
     text = re.sub(r'\s+', ' ', text)
     
+    # Preserve hyphens and dashes if requested (default behavior)
+    if preserve_hyphens:
+        # Standardize different types of hyphens/dashes to regular hyphens for consistency
+        text = re.sub(r'[−–—]', '-', text)  # Unicode minus, en-dash, em-dash to regular hyphen
+    else:
+        # Old behavior: remove hyphens (only for legacy compatibility)
+        text = re.sub(r'[-−–—]', '', text)
+    
     return text.strip()
 
-def calculate_text_similarity(text1: str, text2: str, method: str = 'sequence_matcher') -> float:
+def calculate_text_similarity(text1: str, text2: str, method: str = 'sequence_matcher', preserve_hyphens: bool = True) -> float:
     """
     Calculate similarity between two text strings
     
@@ -58,6 +67,7 @@ def calculate_text_similarity(text1: str, text2: str, method: str = 'sequence_ma
         text1: First text string
         text2: Second text string
         method: Similarity calculation method ('sequence_matcher', 'jaccard', 'cosine')
+        preserve_hyphens: Whether to preserve hyphens in text for comparison (default: True)
         
     Returns:
         Similarity score between 0.0 and 1.0
@@ -65,9 +75,9 @@ def calculate_text_similarity(text1: str, text2: str, method: str = 'sequence_ma
     if not text1 or not text2:
         return 0.0
     
-    # Normalize texts
-    text1 = normalize_text(text1).lower()
-    text2 = normalize_text(text2).lower()
+    # Normalize texts while preserving hyphens by default
+    text1 = normalize_text(text1, preserve_hyphens=preserve_hyphens).lower()
+    text2 = normalize_text(text2, preserve_hyphens=preserve_hyphens).lower()
     
     if text1 == text2:
         return 1.0
@@ -173,7 +183,7 @@ def clean_author_name(name: str) -> str:
     
     # Use the specialized academic matching cleaner for consistency
     from utils.academic_matching import clean_author_name as academic_clean
-    name = academic_clean(normalize_text(name))
+    name = academic_clean(normalize_text(name, preserve_hyphens=True))
     
     # Apply additional general cleaning
     # Remove common prefixes/suffixes

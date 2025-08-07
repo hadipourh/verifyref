@@ -117,12 +117,12 @@ BIO_RESULT_LIMITS = {
 
 def get_cache_key(parsed_ref: Dict[str, Any]) -> str:
     """Generate a cache key for database search results"""
-    title = normalize_text(parsed_ref.get('title', ''))
+    title = normalize_text(parsed_ref.get('title', ''), preserve_hyphens=True)
     authors = parsed_ref.get('authors', [])
     year = parsed_ref.get('year', '')
     
     # Create a normalized key from title + first author + year
-    author_key = normalize_text(authors[0]) if authors else ''
+    author_key = normalize_text(authors[0], preserve_hyphens=True) if authors else ''
     return f"{title}|{author_key}|{year}"
 
 def cached_database_search(verifier: MultiDatabaseVerifier, parsed_ref: Dict[str, Any], verbose: bool = False) -> Dict[str, List[Dict[str, Any]]]:
@@ -218,11 +218,12 @@ def verify_references(input_path: str, output_file: str = None, output_format: s
             extract_task = progress.add_task("📄 Extracting references from PDF...", total=None)
             try:
                 references = grobid_client.extract_references(input_path)
+                progress.update(extract_task, description="✅ PDF processing complete")
                 if not references:
                     console.print("[red]❌ Failed to extract references from PDF[/red]")
                     sys.exit(1)
-                console.print(f"[green]📚 Extracted {len(references)} references from PDF[/green]")
             except Exception as e:
+                progress.update(extract_task, description="❌ PDF processing failed")
                 console.print(f"[red]❌ Error processing PDF: {e}[/red]")
                 sys.exit(1)
                 
@@ -230,11 +231,12 @@ def verify_references(input_path: str, output_file: str = None, output_format: s
             extract_task = progress.add_task("📝 Parsing references from text file...", total=None)
             try:
                 references = parse_text_file_to_raw(input_path)
+                progress.update(extract_task, description="✅ Text file processing complete")
                 if not references:
                     console.print("[red]❌ No valid references found in text file[/red]")
                     sys.exit(1)
-                console.print(f"[green]📚 Extracted {len(references)} references from text file[/green]")
             except Exception as e:
+                progress.update(extract_task, description="❌ Text file processing failed")
                 console.print(f"[red]❌ Error processing text file: {e}[/red]")
                 sys.exit(1)
                 
@@ -243,10 +245,19 @@ def verify_references(input_path: str, output_file: str = None, output_format: s
             try:
                 single_ref = parse_single_reference_to_raw(input_path)
                 references = [single_ref]
-                console.print(f"[green]📚 Parsed single reference[/green]")
+                progress.update(extract_task, description="✅ Reference parsing complete")
             except Exception as e:
+                progress.update(extract_task, description="❌ Reference parsing failed")
                 console.print(f"[red]❌ Error parsing single reference: {e}[/red]")
                 sys.exit(1)
+    
+    # Print success message after progress is complete
+    if input_type == 'pdf':
+        console.print(f"[green]📚 Extracted {len(references)} references from PDF[/green]")
+    elif input_type == 'text_file':
+        console.print(f"[green]📚 Extracted {len(references)} references from text file[/green]")
+    else:
+        console.print(f"[green]📚 Parsed single reference[/green]")
     
     # Optimized reference verification with parallel processing
     verified_references = []
@@ -448,6 +459,45 @@ def verify_references(input_path: str, output_file: str = None, output_format: s
             
             # Sort results by index to maintain order
             verified_references.sort(key=lambda x: x['index'])
+    
+    # Show individual paper results after parallel processing (non-verbose mode)
+    if not verbose and verified_references:
+        console.print("\n" + "="*80)
+        console.print("[bold blue]📊 Individual Reference Results[/bold blue]")
+        console.print("="*80)
+        
+        for result in verified_references:
+            if result['parsed']:
+                i = result['index']
+                title_preview = result['parsed'].get('title', 'Unknown')
+                authors_preview = result['parsed'].get('authors', [])
+                
+                console.print(f"\n[bold cyan]{i}.[/bold cyan] [bold green]{title_preview}[/bold green]")
+                
+                if authors_preview:
+                    if len(authors_preview) <= 3:
+                        authors_str = ", ".join(authors_preview)
+                    else:
+                        authors_str = f"{', '.join(authors_preview[:3])} et al. ({len(authors_preview)} total)"
+                    console.print(f"   👥 {authors_str}")
+                
+                # Show classification
+                classification_value = result['classification']
+                confidence = result['confidence']
+                
+                class_color = {
+                    'authentic': 'green', 'suspicious': 'yellow', 'fake': 'red',
+                    'author_manipulation': 'purple', 'fabricated': 'red', 'inconclusive': 'blue'
+                }.get(classification_value, 'white')
+                
+                class_emoji = {
+                    'authentic': '✅', 'suspicious': '🔍', 'fake': '❌',
+                    'author_manipulation': '🔄', 'fabricated': '🚫', 'inconclusive': '❓'
+                }.get(classification_value, '❓')
+                
+                console.print(f"   [{class_color}]{class_emoji} {classification_value.upper()} ({confidence*100:.1f}% confidence)[/{class_color}]")
+        
+        console.print("\n" + "="*80)
     
     # Generate results summary using the classifier's method
     classification_results = [ref['classification_result'] for ref in verified_references if 'classification_result' in ref]
@@ -753,10 +803,10 @@ def search_and_cite(query: str, context: str = "general", output_file: str = Non
         unique_papers_list = list(unique_papers.values())
         
         # Calculate relevance scores efficiently
-        query_normalized = normalize_text(query)
+        query_normalized = normalize_text(query, preserve_hyphens=True)
         
         def calculate_relevance_score(paper):
-            paper_title = normalize_text(paper.get('title', ''))
+            paper_title = normalize_text(paper.get('title', ''), preserve_hyphens=True)
             base_score = calculate_text_similarity(paper_title, query_normalized)
             context_boost = paper.get('relevance_boost', 1.0)
             

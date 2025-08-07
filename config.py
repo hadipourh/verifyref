@@ -64,14 +64,20 @@ except ImportError:
 # GROBID Configuration
 GROBID_CONFIG = {
     "base_url": os.getenv("GROBID_URL", "http://localhost:8070"),
-    "timeout": int(os.getenv("GROBID_TIMEOUT", "60")),
+    "timeout": int(os.getenv("GROBID_TIMEOUT", "90")),  # Increased timeout for better processing
     "max_retries": int(os.getenv("GROBID_MAX_RETRIES", "3")),
     
-    # Enhanced processing options
+    # Enhanced processing options for higher accuracy
     "use_consolidation": os.getenv("GROBID_USE_CONSOLIDATION", "true").lower() == "true",
     "include_raw_citations": os.getenv("GROBID_INCLUDE_RAW", "true").lower() == "true",
     "segment_sentences": os.getenv("GROBID_SEGMENT_SENTENCES", "true").lower() == "true",
     "generate_ids": os.getenv("GROBID_GENERATE_IDS", "true").lower() == "true",
+    
+    # Advanced accuracy settings
+    "tei_coordinates": os.getenv("GROBID_TEI_COORDINATES", "true").lower() == "true",
+    "include_raw_affiliations": os.getenv("GROBID_RAW_AFFILIATIONS", "true").lower() == "true",
+    "consolidate_header": os.getenv("GROBID_CONSOLIDATE_HEADER", "true").lower() == "true",
+    "consolidate_citations": os.getenv("GROBID_CONSOLIDATE_CITATIONS", "true").lower() == "true",
 }
 
 # Semantic Scholar API Configuration

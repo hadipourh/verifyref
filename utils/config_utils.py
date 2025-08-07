@@ -92,24 +92,29 @@ def setup_logging(verbose=False):
     """Setup logging configuration"""
     import sys
     
-    level = logging.DEBUG if verbose else logging.INFO
-    
-    # Create custom formatter
-    formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-    
     # Setup root logger
     root_logger = logging.getLogger()
-    root_logger.setLevel(level)
     
     # Remove existing handlers
     for handler in root_logger.handlers[:]:
         root_logger.removeHandler(handler)
     
-    # Add console handler - use stdout for main logging
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(level)
-    console_handler.setFormatter(formatter)
-    root_logger.addHandler(console_handler)
+    if verbose:
+        # Enable logging for verbose mode
+        level = logging.DEBUG
+        root_logger.setLevel(level)
+        
+        # Create custom formatter
+        formatter = logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+        
+        # Add console handler - use stdout for main logging
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setLevel(level)
+        console_handler.setFormatter(formatter)
+        root_logger.addHandler(console_handler)
+    else:
+        # Disable all logging for non-verbose mode
+        root_logger.setLevel(logging.CRITICAL + 1)  # Higher than CRITICAL to disable all logs

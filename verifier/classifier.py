@@ -261,8 +261,8 @@ class ReferenceClassifier:
     
     def _calculate_title_similarity(self, extracted_ref: Dict[str, Any], paper: Dict[str, Any]) -> float:
         """Calculate title similarity between reference and paper"""
-        ref_title = normalize_text(extracted_ref.get('title', ''))
-        paper_title = normalize_text(paper.get('title', ''))
+        ref_title = normalize_text(extracted_ref.get('title', ''), preserve_hyphens=True)
+        paper_title = normalize_text(paper.get('title', ''), preserve_hyphens=True)
         
         if not ref_title or not paper_title:
             return 0.0

@@ -91,37 +91,43 @@ class DBLPClient:
         return []
 
     def _generate_optimized_search_strategies(self, title: str, authors: List[str], year: int, venue: str) -> List[tuple]:
-        """Generate optimized search strategies for DBLP with minimal API calls"""
+        """Generate optimized search strategies for DBLP with hyphen-aware variations"""
         strategies = []
         
         if not title:
             return strategies
         
-        # Clean and prepare title variations
-        title_clean = self._clean_title_for_search(title)
-        title_keywords = self._extract_title_keywords(title_clean)
+        # Generate title variations to handle hyphenation issues
+        title_variations = self._generate_title_variations(title)
+        title_keywords = self._extract_title_keywords(title_variations[0])  # Use cleaned version for keywords
         
         if self.fast_mode:
-            # Fast mode: Only use the single most effective strategy
+            # Fast mode: Try main strategies with first title variation, then fallback if needed
+            main_title = title_variations[0]
+            
             if authors and year and title_keywords:
                 main_author_last = self._extract_last_name(authors[0])
                 if main_author_last:
                     # Use keywords for better flexibility while keeping precision
                     keywords_query = f'{" ".join(title_keywords)} {main_author_last} {year}'
                     strategies.append(("keywords_author_year", keywords_query))
+                    
+                    # Add exact title variation as fallback if keywords don't work
+                    strategies.append(("exact_title_year", f'"{main_title}" {year}'))
                     return strategies
             
             # Fallback for fast mode when author/year not available
             if year and title_keywords:
-                # Use keywords + year for better results than exact title
                 strategies.append(("keywords_year", f'{" ".join(title_keywords)} {year}'))
             elif year:
-                strategies.append(("exact_title_year", f'"{title_clean}" {year}'))
+                # Try each title variation with year
+                for i, title_var in enumerate(title_variations[:2]):  # Limit to 2 variations in fast mode
+                    strategies.append((f"exact_title_year_v{i+1}", f'"{title_var}" {year}'))
             else:
-                strategies.append(("exact_title_only", f'"{title_clean}"'))
+                strategies.append(("exact_title_only", f'"{title_variations[0]}"'))
             return strategies
         
-        # Normal mode: Use only 2 most effective strategies for optimal performance
+        # Normal mode: Use comprehensive strategies with title variations
         
         # Strategy 1: Keywords + author + year (most comprehensive and flexible)
         if authors and year and title_keywords:
@@ -130,12 +136,14 @@ class DBLPClient:
                 keywords_query = f'{" ".join(title_keywords)} {main_author_last} {year}'
                 strategies.append(("keywords_author_year", keywords_query))
         
-        # Strategy 2: Fallback - exact title + year (good precision)
+        # Strategy 2: Try exact title variations with year
         if year:
-            strategies.append(("exact_title_year", f'"{title_clean}" {year}'))
+            for i, title_var in enumerate(title_variations):
+                strategies.append((f"exact_title_year_v{i+1}", f'"{title_var}" {year}'))
         else:
-            # If no year, use exact title only as fallback
-            strategies.append(("exact_title_only", f'"{title_clean}"'))
+            # If no year, try title variations only
+            for i, title_var in enumerate(title_variations):
+                strategies.append((f"exact_title_only_v{i+1}", f'"{title_var}"'))
         
         return strategies
     
@@ -165,8 +173,39 @@ class DBLPClient:
         
         return re.sub(r'\s+', ' ', title).strip()
     
+    def _generate_title_variations(self, title: str) -> List[str]:
+        """Generate variations of title to handle hyphenation issues"""
+        import re
+        
+        variations = []
+        
+        # Original title
+        original = self._clean_title_for_search(title)
+        variations.append(original)
+        
+        # Version with hyphens removed (for "zero-correlation" -> "zerocorrelation")
+        no_hyphens = re.sub(r'-', '', original)
+        if no_hyphens != original:
+            variations.append(no_hyphens)
+        
+        # Version with hyphens replaced by spaces (for "zero-correlation" -> "zero correlation")
+        spaced = re.sub(r'-', ' ', original)
+        spaced = re.sub(r'\s+', ' ', spaced)  # Clean up multiple spaces
+        if spaced != original:
+            variations.append(spaced)
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_variations = []
+        for var in variations:
+            if var not in seen:
+                seen.add(var)
+                unique_variations.append(var)
+        
+        return unique_variations
+    
     def _extract_title_keywords(self, title: str, min_word_length: int = 3) -> List[str]:
-        """Extract meaningful keywords from title"""
+        """Extract meaningful keywords from title, handling hyphenated terms intelligently"""
         import re
         
         # Split into words
@@ -183,19 +222,33 @@ class DBLPClient:
         
         keywords = []
         for word in words:
-            # Preserve hyphens within words (e.g., "zero-correlation", "multi-party")
-            # but remove other punctuation
+            # Clean the word but preserve internal hyphens
             word_clean = re.sub(r'[^\w\-]', '', word.lower())
-            # Remove leading/trailing hyphens but keep internal ones
-            word_clean = word_clean.strip('-')
+            word_clean = word_clean.strip('-')  # Remove leading/trailing hyphens
             
             if (len(word_clean) >= min_word_length and 
                 word_clean not in stop_words and
                 not word_clean.isdigit()):
-                keywords.append(word_clean)
+                
+                # For hyphenated terms, add both the full term and individual parts
+                if '-' in word_clean:
+                    # Add the full hyphenated term
+                    keywords.append(word_clean)
+                    
+                    # Also add individual parts if they're meaningful
+                    parts = word_clean.split('-')
+                    for part in parts:
+                        part = part.strip()
+                        if (len(part) >= min_word_length and 
+                            part not in stop_words and
+                            not part.isdigit() and
+                            part not in keywords):
+                            keywords.append(part)
+                else:
+                    keywords.append(word_clean)
         
-        # Return top 4-5 keywords to avoid overly complex queries
-        return keywords[:5]
+        # Return top 6-7 keywords to allow for hyphenated term expansions
+        return keywords[:7]
     
     def _extract_last_name(self, author: str) -> str:
         """Extract last name from author string"""

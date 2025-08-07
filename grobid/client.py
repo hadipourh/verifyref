@@ -49,12 +49,19 @@ class GrobidClient:
         self.segment_sentences = GROBID_CONFIG.get("segment_sentences", True)
         self.generate_ids = GROBID_CONFIG.get("generate_ids", True)
         
+        # Advanced accuracy settings
+        self.tei_coordinates = GROBID_CONFIG.get("tei_coordinates", True)
+        self.include_raw_affiliations = GROBID_CONFIG.get("include_raw_affiliations", True)
+        self.consolidate_header = GROBID_CONFIG.get("consolidate_header", True)
+        self.consolidate_citations = GROBID_CONFIG.get("consolidate_citations", True)
+        
         # Ensure base URL doesn't end with slash
         self.base_url = self.base_url.rstrip('/')
         
         logger.info(f"GROBID initialized - base_url={self.base_url}, timeout={self.timeout}, "
                    f"consolidation={self.use_consolidation}, "
-                   f"raw_citations={self.include_raw_citations}")
+                   f"raw_citations={self.include_raw_citations}, "
+                   f"enhanced_accuracy=True")
     
     def parse_citation_string(self, citation_text: str) -> Optional[Dict[str, Any]]:
         """
@@ -153,13 +160,17 @@ class GrobidClient:
             with open(pdf_path, 'rb') as pdf_file:
                 files = {'input': pdf_file}
                 
-                # Enhanced parameters for better processing
+                # Enhanced parameters for better processing and accuracy
                 data = {}
                 if use_consolidation:
                     data['consolidateHeader'] = '1'  # Consolidate header information
                     data['consolidateCitations'] = '1'  # Consolidate citations with external sources
                 if include_raw_citations:
                     data['includeRawCitations'] = '1'  # Include raw citation strings
+                if self.tei_coordinates:
+                    data['teiCoordinates'] = '1'  # Include coordinates for better structure
+                if self.generate_ids:
+                    data['generateIDs'] = '1'  # Generate unique IDs
                 
                 # Try processReferences first with enhanced parameters
                 response = requests.post(
@@ -181,13 +192,15 @@ class GrobidClient:
                 # Reopen file for second request
                 pdf_file.seek(0)
                 
-                # Enhanced parameters for full text processing
+                # Enhanced parameters for full text processing with higher accuracy
                 fulltext_data = {
-                    'consolidateHeader': '1' if use_consolidation else '0',
-                    'consolidateCitations': '1' if use_consolidation else '0',
+                    'consolidateHeader': '1' if self.consolidate_header else '0',
+                    'consolidateCitations': '1' if self.consolidate_citations else '0',
                     'includeRawCitations': '1' if include_raw_citations else '0',
-                    'generateIDs': '1' if self.generate_ids else '0',  # Generate unique IDs for elements
-                    'segmentSentences': '1' if self.segment_sentences else '0'  # Improve sentence segmentation
+                    'generateIDs': '1' if self.generate_ids else '0',
+                    'segmentSentences': '1' if self.segment_sentences else '0',
+                    'teiCoordinates': '1' if self.tei_coordinates else '0',
+                    'includeRawAffiliations': '1' if self.include_raw_affiliations else '0'
                 }
                 
                 response = requests.post(

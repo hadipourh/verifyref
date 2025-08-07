@@ -118,12 +118,12 @@ class ReferenceParser:
             return None
     
     def _clean_title(self, title: str) -> str:
-        """Clean and normalize title text"""
+        """Clean and normalize title text while preserving important punctuation"""
         if not title:
             return ''
         
-        # Remove extra whitespace and normalize
-        title = normalize_text(title)
+        # Remove extra whitespace and normalize while preserving hyphens
+        title = normalize_text(title, preserve_hyphens=True)
         
         # Remove trailing punctuation that might be artifacts
         title = re.sub(r'[.,:;]+$', '', title)
@@ -143,8 +143,8 @@ class ReferenceParser:
             if not author:
                 continue
                 
-            # Normalize text
-            author = normalize_text(author)
+            # Normalize text while preserving hyphens in author names
+            author = normalize_text(author, preserve_hyphens=True)
             
             # Remove common artifacts
             author = re.sub(r'[{}|<>]', '', author)
@@ -162,12 +162,12 @@ class ReferenceParser:
         return cleaned_authors
     
     def _clean_venue(self, venue: str) -> str:
-        """Clean and normalize venue/journal name"""
+        """Clean and normalize venue/journal name while preserving important punctuation"""
         if not venue:
             return ''
         
-        # Normalize text
-        venue = normalize_text(venue)
+        # Normalize text while preserving hyphens in venue names
+        venue = normalize_text(venue, preserve_hyphens=True)
         
         # Remove common prefixes/suffixes
         venue = re.sub(r'^(in\s+|proceedings\s+of\s+)', '', venue, flags=re.IGNORECASE)
@@ -203,7 +203,7 @@ class ReferenceParser:
         if not pages:
             return ''
         
-        pages = normalize_text(pages)
+        pages = normalize_text(pages, preserve_hyphens=True)
         
         # Normalize page ranges
         pages = re.sub(r'pp?\.\s*', '', pages, flags=re.IGNORECASE)
@@ -248,7 +248,7 @@ class ReferenceParser:
         if not field:
             return ''
         
-        field = normalize_text(field)
+        field = normalize_text(field, preserve_hyphens=True)
         field = re.sub(r'[{}|<>]', '', field)
         
         return field.strip()
