@@ -1,5 +1,5 @@
 """
-RefifyRef - High-performance academic reference verification tool
+VerifyRef - High-performance academic reference verification tool
 Copyright (C) 2025 Hosein Hadipour <hsn.hadipour@gmail.com>
 
 This program is free software: you can redistribute it and/or modify
@@ -16,164 +16,208 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
-import json
-from datetime import datetime
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 import logging
+from .summary_data import get_verification_summary_data
 
 logger = logging.getLogger(__name__)
 
-def generate_human_readable_report(results: Dict[str, Any], output_file: str = None) -> str:
-    """
-    Generate a human-readable analysis report
+def generate_summary_table(summary: Dict[str, Any], total_refs: int) -> List[str]:
+    """Generate text-based summary table using same data as terminal output"""
+    lines = []
     
-    Args:
-        results: Analysis results dictionary
-        output_file: Optional file path to save the report
+    # Get the same data used by the terminal display
+    summary_data = get_verification_summary_data(summary)
+    
+    # Create clean text version without borders
+    lines.append("Verification Summary")
+    lines.append("")
+    lines.append("Classification              Count    Percentage    Status")
+    lines.append("-" * 60)
+    
+    for item in summary_data:
+        label = item['label']
+        count = item['count']
+        percentage = item['percentage']
+        status = "●" if count > 0 else "○"
         
-    Returns:
-        String containing the formatted report
-    """
+        lines.append(f"{label:<27} {count:5d}    {percentage:6.1f}%        {status}")
     
+    lines.append("")
+    
+    # Add risk assessment if available  
+    risk_assessment = summary.get('risk_assessment', '')
+    if risk_assessment:
+        lines.append("")
+        lines.append(f"{risk_assessment}")
+    
+    return lines
+
+def generate_human_readable_report(results: Dict[str, Any], classifier=None) -> str:
+    """Generate a human-readable text report with enhanced formatting"""
     report_lines = []
     
     # Header
-    report_lines.append("="*80)
-    report_lines.append("REFCHECK ACADEMIC REFERENCE VERIFICATION REPORT")
-    report_lines.append("="*80)
+    report_lines.append("=" * 80)
+    report_lines.append("🔍 VerifyRef Reference Verification Report")
+    report_lines.append("=" * 80)
     report_lines.append("")
     
-    # Metadata
-    metadata = results.get('analysis_metadata', {})
-    report_lines.append(f"📄 PDF File: {metadata.get('pdf_file', 'Unknown')}")
-    report_lines.append(f"📅 Analysis Date: {metadata.get('analysis_date', 'Unknown')}")
-    report_lines.append(f"🔍 Total References Found: {metadata.get('total_references_found', 0)}")
-    report_lines.append(f"✅ References Processed: {metadata.get('references_processed', 0)}")
-    report_lines.append("")
-    
-    # Processing notes
-    notes = metadata.get('processing_notes', [])
-    if notes:
-        report_lines.append("📝 Processing Notes:")
-        for note in notes:
-            report_lines.append(f"   • {note}")
-        report_lines.append("")
-    
-    # Summary
+    # Summary using consistent function
     summary = results.get('summary', {})
-    report_lines.append("📊 SUMMARY STATISTICS")
-    report_lines.append("-" * 40)
-    
-    counts = summary.get('classification_counts', {})
-    percentages = summary.get('percentages', {})
-    
-    report_lines.append(f"✅ Authentic References:       {counts.get('authentic', 0):3d} ({percentages.get('authentic', 0):5.1f}%)")
-    report_lines.append(f"🔍 Suspicious References:      {counts.get('suspicious', 0):3d} ({percentages.get('suspicious', 0):5.1f}%)")
-    report_lines.append(f"❌ Fake References:           {counts.get('fake', 0):3d} ({percentages.get('fake', 0):5.1f}%)")
-    report_lines.append(f"🔄 Author Manipulation:       {counts.get('author_manipulation', 0):3d} ({percentages.get('author_manipulation', 0):5.1f}%)")
-    report_lines.append(f"🚫 Fabricated References:     {counts.get('fabricated', 0):3d} ({percentages.get('fabricated', 0):5.1f}%)")
-    report_lines.append(f"❓ Inconclusive:              {counts.get('inconclusive', 0):3d} ({percentages.get('inconclusive', 0):5.1f}%)")
-    report_lines.append("")
-    
-    # Risk assessment
-    risk = summary.get('risk_assessment', 'Unknown')
-    if risk.startswith('LOW'):
-        risk_emoji = "🟢"
-    elif risk.startswith('MEDIUM'):
-        risk_emoji = "🟡"
-    else:
-        risk_emoji = "🔴"
-    
-    report_lines.append(f"🎯 Risk Assessment: {risk_emoji} {risk}")
+    total_refs = summary.get('total_references', 0)
+    summary_lines = generate_summary_table(summary, total_refs)
+    report_lines.extend(summary_lines)
     report_lines.append("")
     
     # Detailed results
-    report_lines.append("📋 DETAILED REFERENCE ANALYSIS")
-    report_lines.append("="*80)
+    report_lines.append("📚 DETAILED RESULTS")
+    report_lines.append("=" * 80)
+    report_lines.append("")
     
-    detailed_results = results.get('detailed_results', [])
-    
-    for result in detailed_results:
-        ref_index = result.get('index', 0)
-        extracted = result.get('parsed', {})
-        classification = result.get('classification', 'unknown')
-        confidence = result.get('confidence', 0.0)
-        similarity = result.get('similarity_score', 0.0)
-        matched_paper = result.get('matched_paper')
-        reasons = result.get('reasons', [])
+    references = results.get('references', [])
+    for ref_data in references:
+        index = ref_data.get('index', 0)
+        parsed = ref_data.get('parsed', {})
+        classification = ref_data.get('classification', 'unknown')
+        confidence = ref_data.get('confidence', 0.0)
+        verification_results = ref_data.get('verification_results', {})
         
-        # Classification emoji
-        if classification == 'authentic':
-            class_emoji = "✅"
-        elif classification == 'suspicious':
-            class_emoji = "⚠️"
-        elif classification == 'fake':
-            class_emoji = "❌"
-        elif classification == 'author_manipulation':
-            class_emoji = "🔄"
-        elif classification == 'fabricated':
-            class_emoji = "🚫"
-        else:
-            class_emoji = "❓"
+        # Reference header with enhanced separator
+        report_lines.append("=" * 80)
+        report_lines.append(f"═══ Reference {index}/{total_refs} ═══")
         
-        # Add a clear separator between references
-        report_lines.append("\n" + "-" * 80 + "\n")
-        report_lines.append(f"[{ref_index:2d}] {class_emoji} {classification.upper()}")
-        report_lines.append("-" * 60)
+        # Paper title
+        title = parsed.get('title', 'Unknown Title') if parsed else 'Failed to parse'
+        report_lines.append(f"📖 {title}")
         
-        # Reference details
-        title = extracted.get('title', 'No title')
-        authors = extracted.get('authors', [])
-        venue = extracted.get('venue', 'Unknown venue')
-        year = extracted.get('year', 'Unknown year')
+        # Authors
+        if parsed and parsed.get('authors'):
+            authors = parsed.get('authors', [])
+            authors_str = ", ".join(authors[:3])
+            if len(authors) > 3:
+                authors_str += f" et al. ({len(authors)} total)"
+            report_lines.append(f"👥 {authors_str}")
         
-        report_lines.append(f"📖 Title: {title}")
-        if authors:
-            if len(authors) <= 3:
-                author_str = ", ".join(authors)
+        # Year and venue
+        if parsed:
+            year = parsed.get('year')
+            venue = parsed.get('venue')
+            if year or venue:
+                venue_line = ""
+                if venue:
+                    venue_line += f"📍 {venue}"
+                if year:
+                    venue_line += f" ({year})" if venue else f"📅 {year}"
+                report_lines.append(venue_line)
+        
+        report_lines.append("-" * 80)
+        
+        # Classification result
+        class_emoji = {
+            'authentic': '✅',
+            'suspicious': '🔍',
+            'fake': '❌',
+            'author_manipulation': '🔄',
+            'fabricated': '🚫',
+            'inconclusive': '❓'
+        }.get(classification, '❓')
+        
+        report_lines.append(f"{class_emoji} Classification: {classification.upper()} ({confidence*100:.1f}% confidence)")
+        
+        # Database verification results (detailed information)
+        if verification_results:
+            report_lines.append("")
+            report_lines.append("🔍 DATABASE VERIFICATION RESULTS:")
+            report_lines.append("-" * 60)
+            
+            # Use provided classifier or create one if none provided
+            if classifier is None:
+                from verifier.classifier import ReferenceClassifier
+                temp_classifier = ReferenceClassifier()
             else:
-                author_str = f"{', '.join(authors[:3])}, et al. ({len(authors)} total)"
-            report_lines.append(f"👥 Authors: {author_str}")
-        else:
-            report_lines.append("👥 Authors: Not specified")
+                temp_classifier = classifier
+            
+            for db_name, db_results in verification_results.items():
+                if isinstance(db_results, list) and db_results:
+                    report_lines.append(f"📚 {db_name.upper()}:")
+                    report_lines.append(f"  Found {len(db_results)} result(s)")
+                    
+                    for i, result in enumerate(db_results[:3], 1):  # Show top 3 results
+                        if isinstance(result, dict):
+                            result_title = result.get('title', 'Unknown')
+                            result_authors = result.get('authors', [])
+                            result_year = result.get('year', 'Unknown')
+                            
+                            # Calculate similarity for display
+                            similarity = temp_classifier._calculate_overall_similarity(parsed, result) * 100
+                            
+                            report_lines.append(f"  {i}. {result_title}")
+                            if result_authors:
+                                authors_str = ", ".join(result_authors[:2])
+                                if len(result_authors) > 2:
+                                    authors_str += " et al."
+                                report_lines.append(f"     Authors: {authors_str}")
+                            report_lines.append(f"     Year: {result_year} | Similarity: {similarity:.1f}%")
+                            
+                            # DOI or URL if available
+                            if result.get('doi'):
+                                report_lines.append(f"     DOI: {result['doi']}")
+                            elif result.get('url'):
+                                report_lines.append(f"     URL: {result['url']}")
+                            
+                            report_lines.append("")
+                    
+                    if len(db_results) > 3:
+                        report_lines.append(f"  ... and {len(db_results) - 3} more results")
+                        report_lines.append("")
+                elif isinstance(db_results, list):
+                    report_lines.append(f"📚 {db_name.upper()}: No results found")
+                else:
+                    report_lines.append(f"📚 {db_name.upper()}: {str(db_results)}")
+                    
+                report_lines.append("")
         
-        report_lines.append(f"📰 Venue: {venue}")
-        report_lines.append(f"📅 Year: {year}")
+        # Analysis details/reasons
+        details = ref_data.get('details', [])
+        if details and isinstance(details, list):
+            report_lines.append("🔍 ANALYSIS DETAILS:")
+            report_lines.append("-" * 60)
+            for detail in details:
+                report_lines.append(f"  • {detail}")
+        elif details:
+            report_lines.append("🔍 ANALYSIS DETAILS:")
+            report_lines.append("-" * 60)
+            report_lines.append(f"  {details}")
         
-        # Verification details
-        report_lines.append(f"🎯 Confidence: {confidence:.1%}")
-        if similarity > 0:
-            report_lines.append(f"📊 Similarity Score: {similarity:.2f}")
+        # AI verification results if available
+        verification_result = ref_data.get('verification_result', {})
+        ai_verification = verification_result.get('details', {}).get('ai_verification')
+        if ai_verification:
+            report_lines.append("")
+            report_lines.append("🤖 AI VERIFICATION ANALYSIS:")
+            report_lines.append("-" * 60)
+            report_lines.append(f"  Model: {ai_verification.get('model', 'Unknown')}")
+            report_lines.append(f"  Tokens Used: {ai_verification.get('tokens_used', 'Unknown')}")
+            
+            # Note: The actual AI reasoning and flags are incorporated into the main reasons
+            # This section shows the technical details of the AI analysis
+            report_lines.append(f"  Analysis Version: {ai_verification.get('analysis_version', '1.0')}")
         
-        # Matched paper (if any)
-        if matched_paper:
-            report_lines.append(f"🔗 Matched Paper: {matched_paper.get('title', 'Unknown')}")
-            citations = matched_paper.get('citation_count', 0)
-            if citations > 0:
-                report_lines.append(f"📈 Citations: {citations}")
+        # Original reference text
+        original = ref_data.get('original')
+        if original:
+            report_lines.append("")
+            report_lines.append("📝 ORIGINAL REFERENCE:")
+            report_lines.append("-" * 60)
+            report_lines.append(f"  {str(original)}")
         
-        # Reasons
-        if reasons:
-            report_lines.append("💭 Analysis Notes:")
-            for reason in reasons:
-                report_lines.append(f"   • {reason}")
+        report_lines.append("=" * 80)
+        report_lines.append("")
     
     # Footer
-    report_lines.append("\n" + "="*80)
-    report_lines.append("Report generated by RefCheck - Academic Reference Verification Tool")
-    report_lines.append(f"Generated at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    report_lines.append("="*80)
+    report_lines.append("Generated by VerifyRef - Reference Verification Tool")
+    report_lines.append("Using ethical API-only verification methods")
+    report_lines.append("=" * 80)
     
-    # Combine all lines
-    report_text = "\n".join(report_lines)
-    
-    # Save to file if specified
-    if output_file:
-        try:
-            with open(output_file, 'w', encoding='utf-8') as f:
-                f.write(report_text)
-            logger.info(f"Human-readable report saved to: {output_file}")
-        except Exception as e:
-            logger.error(f"Failed to save report to {output_file}: {e}")
-    
-    return report_text
+    return "\n".join(report_lines)

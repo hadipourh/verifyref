@@ -103,7 +103,9 @@ class IACRClient:
             try:
                 # Use only the best query for web search
                 best_query = essential_queries[0]
-                web_results = self._search_web_strategy(best_query, 'primary_search', limit)
+                # Determine search strategy based on what we're searching for
+                search_strategy = 'title_search' if title else 'author_search'
+                web_results = self._search_web_strategy(best_query, search_strategy, limit, title=title, authors=authors)
                 all_results.extend(web_results)
                 self.request_count += 1
                 
@@ -248,7 +250,7 @@ class IACRClient:
         
         return key_terms[:8]  # Return top 8 key terms
     
-    def _search_web_strategy(self, query: str, strategy: str, limit: int) -> List[Dict[str, Any]]:
+    def _search_web_strategy(self, query: str, strategy: str, limit: int, title: str = None, authors: List[str] = None) -> List[Dict[str, Any]]:
         """Execute specific web search strategy"""
         # Check cache first
         cache_key = f"{strategy}_{query}_{limit}"
@@ -261,7 +263,7 @@ class IACRClient:
         
         try:
             # Build search parameters based on strategy
-            params = self._build_search_params(query, strategy)
+            params = self._build_search_params(query, strategy, title=title, authors=authors)
             
             logger.debug(f"IACR {strategy} search initiated")
             response = self.session.get(self.search_url, params=params, timeout=self.timeout)
@@ -281,26 +283,28 @@ class IACRClient:
             logger.warning(f"IACR {strategy} search failed: {type(e).__name__}")
             return []
     
-    def _build_search_params(self, query: str, strategy: str) -> Dict[str, str]:
-        """Build search parameters for different strategies"""
-        base_params = {'q': query}
+    def _build_search_params(self, query: str, strategy: str, title: str = None, authors: List[str] = None) -> Dict[str, str]:
+        """
+        Build search parameters for different strategies using IACR's specific search fields.
         
-        if strategy == 'quoted_search':
-            # Use exact phrase matching
-            base_params['q'] = f'"{query}"'
-        elif strategy == 'author_search':
-            # Search in author fields specifically
-            base_params['author'] = query
-        elif strategy == 'year_range_search':
-            # Add year constraints if possible
-            # IACR search might support year parameters
-            pass
-        elif strategy == 'category_search':
-            # Search within specific categories
-            # Could be enhanced with category parameters
-            pass
-        
-        return base_params
+        IACR website provides separate fields:
+        - 'title' for "Match title" searches
+        - 'author' for "Match authors" searches  
+        - 'q' for generic "Match anything" searches
+        """
+        # Use IACR's specific search fields for better accuracy
+        if strategy == 'title_search' and title:
+            # Use IACR's "Match title" field for title-based searches
+            return {'title': query}
+        elif strategy == 'author_search' and authors:
+            # Use IACR's "Match authors" field for author-based searches
+            return {'author': query}
+        elif strategy == 'quoted_search':
+            # Use exact phrase matching in generic field
+            return {'q': f'"{query}"'}
+        else:
+            # Default to generic search field
+            return {'q': query}
     
     def _parse_search_results_improved(self, html_content: str) -> List[Dict[str, Any]]:
         """Improved parsing with better title and author extraction"""

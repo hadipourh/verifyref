@@ -171,14 +171,14 @@ def clean_author_name(name: str) -> str:
     if not name:
         return ''
     
-    name = normalize_text(name)
+    # Use the specialized academic matching cleaner for consistency
+    from utils.academic_matching import clean_author_name as academic_clean
+    name = academic_clean(normalize_text(name))
     
+    # Apply additional general cleaning
     # Remove common prefixes/suffixes
     name = re.sub(r'^(Dr\.?|Prof\.?|Mr\.?|Ms\.?|Mrs\.?)[ ]+', '', name, flags=re.IGNORECASE)
     name = re.sub(r'\s+(Jr\.?|Sr\.?|III?|IV)$', '', name, flags=re.IGNORECASE)
-    
-    # Remove DBLP-style numeric disambiguation suffixes (e.g., 'Kai Hu 0001' or 'Kai Hu 001' -> 'Kai Hu')
-    name = re.sub(r'\s+\d{3,4}$', '', name)
     
     # Remove extra punctuation
     name = re.sub(r'[^\w\s\.\-]', '', name)

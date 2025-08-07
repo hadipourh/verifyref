@@ -51,7 +51,9 @@ from verifier.semantic_scholar import SemanticScholarClient
 from verifier.multi_database_verifier import MultiDatabaseVerifier
 from verifier.classifier import ReferenceClassifier
 from utils.report_generator import generate_human_readable_report
+from utils.summary_data import get_verification_summary_data
 from utils.helpers import calculate_text_similarity, normalize_text
+from utils.academic_matching import clean_author_name
 
 # Initialize rich console
 console = Console()
@@ -274,185 +276,6 @@ def determine_output_format(output_file: str, output_format: str = None) -> str:
     # Default to JSON
     return 'json'
 
-def generate_human_readable_report(results: Dict[str, Any], classifier=None) -> str:
-    """Generate a human-readable text report with enhanced formatting"""
-    report_lines = []
-    
-    # Header
-    report_lines.append("=" * 80)
-    report_lines.append("🔍 VerifyRef Reference Verification Report")
-    report_lines.append("=" * 80)
-    report_lines.append("")
-    
-    # Summary
-    summary = results.get('summary', {})
-    total_refs = summary.get('total_references', 0)
-    authentic = summary.get('authentic', 0)
-    suspicious = summary.get('suspicious', 0)
-    fake = summary.get('fake', 0)
-    inconclusive = summary.get('inconclusive', 0)
-    
-    report_lines.append("📊 SUMMARY")
-    report_lines.append("-" * 80)
-    report_lines.append(f"Total References: {total_refs}")
-    report_lines.append(f"✅ Authentic: {authentic}")
-    report_lines.append(f"🔍 Suspicious: {suspicious}")
-    report_lines.append(f"❌ Fake/Fabricated: {fake}")
-    report_lines.append(f"❓ Inconclusive: {inconclusive}")
-    report_lines.append("")
-    
-    # Detailed results
-    report_lines.append("📚 DETAILED RESULTS")
-    report_lines.append("=" * 80)
-    report_lines.append("")
-    
-    references = results.get('references', [])
-    for ref_data in references:
-        index = ref_data.get('index', 0)
-        parsed = ref_data.get('parsed', {})
-        classification = ref_data.get('classification', 'unknown')
-        confidence = ref_data.get('confidence', 0.0)
-        verification_results = ref_data.get('verification_results', {})
-        
-        # Reference header with enhanced separator
-        report_lines.append("=" * 80)
-        report_lines.append(f"═══ Reference {index}/{total_refs} ═══")
-        
-        # Paper title
-        title = parsed.get('title', 'Unknown Title') if parsed else 'Failed to parse'
-        report_lines.append(f"📖 {title}")
-        
-        # Authors
-        if parsed and parsed.get('authors'):
-            authors = parsed.get('authors', [])
-            authors_str = ", ".join(authors[:3])
-            if len(authors) > 3:
-                authors_str += f" et al. ({len(authors)} total)"
-            report_lines.append(f"👥 {authors_str}")
-        
-        # Year and venue
-        if parsed:
-            year = parsed.get('year')
-            venue = parsed.get('venue')
-            if year or venue:
-                venue_line = ""
-                if venue:
-                    venue_line += f"📍 {venue}"
-                if year:
-                    venue_line += f" ({year})" if venue else f"📅 {year}"
-                report_lines.append(venue_line)
-        
-        report_lines.append("-" * 80)
-        
-        # Classification result
-        class_emoji = {
-            'authentic': '✅',
-            'suspicious': '🔍',
-            'fake': '❌',
-            'author_manipulation': '🔄',
-            'fabricated': '🚫',
-            'inconclusive': '❓'
-        }.get(classification, '❓')
-        
-        report_lines.append(f"{class_emoji} Classification: {classification.upper()} ({confidence*100:.1f}% confidence)")
-        
-        # Database verification results (detailed information)
-        if verification_results:
-            report_lines.append("")
-            report_lines.append("🔍 DATABASE VERIFICATION RESULTS:")
-            report_lines.append("-" * 60)
-            
-            # Use provided classifier or create one if none provided
-            if classifier is None:
-                from verifier.classifier import ReferenceClassifier
-                temp_classifier = ReferenceClassifier()
-            else:
-                temp_classifier = classifier
-            
-            for db_name, db_results in verification_results.items():
-                if isinstance(db_results, list) and db_results:
-                    report_lines.append(f"📚 {db_name.upper()}:")
-                    report_lines.append(f"  Found {len(db_results)} result(s)")
-                    
-                    for i, result in enumerate(db_results[:3], 1):  # Show top 3 results
-                        if isinstance(result, dict):
-                            result_title = result.get('title', 'Unknown')
-                            result_authors = result.get('authors', [])
-                            result_year = result.get('year', 'Unknown')
-                            
-                            # Calculate similarity for display
-                            similarity = temp_classifier._calculate_overall_similarity(parsed, result) * 100
-                            
-                            report_lines.append(f"  {i}. {result_title}")
-                            if result_authors:
-                                authors_str = ", ".join(result_authors[:2])
-                                if len(result_authors) > 2:
-                                    authors_str += " et al."
-                                report_lines.append(f"     Authors: {authors_str}")
-                            report_lines.append(f"     Year: {result_year} | Similarity: {similarity:.1f}%")
-                            
-                            # DOI or URL if available
-                            if result.get('doi'):
-                                report_lines.append(f"     DOI: {result['doi']}")
-                            elif result.get('url'):
-                                report_lines.append(f"     URL: {result['url']}")
-                            
-                            report_lines.append("")
-                    
-                    if len(db_results) > 3:
-                        report_lines.append(f"  ... and {len(db_results) - 3} more results")
-                        report_lines.append("")
-                elif isinstance(db_results, list):
-                    report_lines.append(f"📚 {db_name.upper()}: No results found")
-                else:
-                    report_lines.append(f"� {db_name.upper()}: {str(db_results)}")
-                    
-                report_lines.append("")
-        
-        # Analysis details/reasons
-        details = ref_data.get('details', [])
-        if details and isinstance(details, list):
-            report_lines.append("🔍 ANALYSIS DETAILS:")
-            report_lines.append("-" * 60)
-            for detail in details:
-                report_lines.append(f"  • {detail}")
-        elif details:
-            report_lines.append("🔍 ANALYSIS DETAILS:")
-            report_lines.append("-" * 60)
-            report_lines.append(f"  {details}")
-        
-        # AI verification results if available
-        verification_result = ref_data.get('verification_result', {})
-        ai_verification = verification_result.get('details', {}).get('ai_verification')
-        if ai_verification:
-            report_lines.append("")
-            report_lines.append("🤖 AI VERIFICATION ANALYSIS:")
-            report_lines.append("-" * 60)
-            report_lines.append(f"  Model: {ai_verification.get('model', 'Unknown')}")
-            report_lines.append(f"  Tokens Used: {ai_verification.get('tokens_used', 'Unknown')}")
-            
-            # Note: The actual AI reasoning and flags are incorporated into the main reasons
-            # This section shows the technical details of the AI analysis
-            report_lines.append(f"  Analysis Version: {ai_verification.get('analysis_version', '1.0')}")
-        
-        # Original reference text
-        original = ref_data.get('original')
-        if original:
-            report_lines.append("")
-            report_lines.append("📝 ORIGINAL REFERENCE:")
-            report_lines.append("-" * 60)
-            report_lines.append(f"  {str(original)}")
-        
-        report_lines.append("=" * 80)
-        report_lines.append("")
-    
-    # Footer
-    report_lines.append("Generated by VerifyRef - Reference Verification Tool")
-    report_lines.append("Using ethical API-only verification methods")
-    report_lines.append("=" * 80)
-    
-    return "\n".join(report_lines)
-
 def save_results(results: Dict[str, Any], output_file: str, output_format: str, classifier=None):
     """Save results in the specified format"""
     try:
@@ -487,7 +310,6 @@ def verify_references(pdf_path: str, output_file: str = None, output_format: str
     - Reduced memory overhead with efficient string operations
     - Smart progress reporting (sequential for verbose, parallel for speed)
     """
-    import time
     start_time = time.time()
     
     # Print header
@@ -606,7 +428,7 @@ def verify_references(pdf_path: str, output_file: str = None, output_format: str
     ) as progress:
         
         main_task = progress.add_task(
-            "🔍 Processing references", 
+            f"🔍 Processing references [0/{len(references)}]", 
             total=len(references)
         )
         
@@ -615,7 +437,7 @@ def verify_references(pdf_path: str, output_file: str = None, output_format: str
             for i, ref in enumerate(references, 1):
                 progress.update(
                     main_task, 
-                    description=f"🔍 Reference {i}/{len(references)}",
+                    description=f"🔍 Processing reference [{i}/{len(references)}]",
                     completed=i-1
                 )
                 
@@ -699,7 +521,7 @@ def verify_references(pdf_path: str, output_file: str = None, output_format: str
                     completed_count += 1
                     progress.update(
                         main_task,
-                        description=f"🔍 Completed {completed_count}/{len(references)}",
+                        description=f"🔍 Processing references [{completed_count}/{len(references)}]",
                         completed=completed_count
                     )
                     
@@ -813,47 +635,22 @@ def display_verification_summary(summary: Dict[str, Any], total_refs: int):
     table.add_column("Percentage", justify="right", min_width=10)
     table.add_column("Status", justify="center", min_width=6)
     
-    # Use the correct classification_counts from classifier's summary
-    counts = summary.get('classification_counts', {})
-    percentages = summary.get('percentages', {})
+    # Get shared summary data
+    summary_data = get_verification_summary_data(summary)
     
     # Add rows with colors and monochrome hacker-style symbols
-    table.add_row(
-        "[green][+] AUTHENTIC[/green]", 
-        str(counts.get('authentic', 0)), 
-        f"{percentages.get('authentic', 0):6.1f}%",
-        "[green]●[/green]" if counts.get('authentic', 0) > 0 else "[dim]○[/dim]"
-    )
-    table.add_row(
-        "[yellow][?] SUSPICIOUS[/yellow]", 
-        str(counts.get('suspicious', 0)), 
-        f"{percentages.get('suspicious', 0):6.1f}%",
-        "[yellow]●[/yellow]" if counts.get('suspicious', 0) > 0 else "[dim]○[/dim]"
-    )
-    table.add_row(
-        "[red][X] FAKE[/red]", 
-        str(counts.get('fake', 0)), 
-        f"{percentages.get('fake', 0):6.1f}%",
-        "[red]●[/red]" if counts.get('fake', 0) > 0 else "[dim]○[/dim]"
-    )
-    table.add_row(
-        "[purple][~] AUTHOR MANIPULATION[/purple]", 
-        str(counts.get('author_manipulation', 0)), 
-        f"{percentages.get('author_manipulation', 0):6.1f}%",
-        "[purple]●[/purple]" if counts.get('author_manipulation', 0) > 0 else "[dim]○[/dim]"
-    )
-    table.add_row(
-        "[red][-] FABRICATED[/red]", 
-        str(counts.get('fabricated', 0)), 
-        f"{percentages.get('fabricated', 0):6.1f}%",
-        "[red]●[/red]" if counts.get('fabricated', 0) > 0 else "[dim]○[/dim]"
-    )
-    table.add_row(
-        "[blue][!] INCONCLUSIVE[/blue]", 
-        str(counts.get('inconclusive', 0)), 
-        f"{percentages.get('inconclusive', 0):6.1f}%",
-        "[blue]●[/blue]" if counts.get('inconclusive', 0) > 0 else "[dim]○[/dim]"
-    )
+    for item in summary_data:
+        color = item['color']
+        count = item['count']
+        percentage = item['percentage']
+        label = item['label']
+        
+        table.add_row(
+            f"[{color}]{label}[/{color}]", 
+            str(count), 
+            f"{percentage:6.1f}%",
+            f"[{color}]●[/{color}]" if count > 0 else "[dim]○[/dim]"
+        )
     
     console.print()
     console.print(table)
@@ -1200,11 +997,6 @@ def search_and_cite(query: str, context: str = "general", output_file: str = Non
             console.print("[red]Error traceback:[/red]")
             console.print(traceback.format_exc())
 
-def clean_author_name(author_name: str) -> str:
-    """Clean author names by removing database disambiguation numbers"""
-    from utils.academic_matching import clean_author_name as clean_name
-    return clean_name(author_name)
-
 def generate_bibtex(paper: dict, key: str) -> str:
     """Generate comprehensive BibTeX entry for a paper with optimized string handling"""
     # Extract all fields once
@@ -1308,7 +1100,6 @@ def save_citation_results(citations: list, output_file: str, output_format: str 
     try:
         if format_type == 'json':
             # Save as JSON with streaming for large datasets
-            import json
             data = {
                 'query_timestamp': str(datetime.now()),
                 'total_results': len(citations),
@@ -1441,7 +1232,6 @@ Examples:
         sys.exit(1)
     except Exception as e:
         if args.verbose:
-            import traceback
             console.print("[red]Error traceback:[/red]")
             console.print(traceback.format_exc())
         else:

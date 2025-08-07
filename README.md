@@ -312,4 +312,8 @@ VerifyRef is designed to assist in the verification of academic references and *
 
 ---
 
-**For technical documentation and API details, see the [verifier/](verifier/) directory.**
+## Documentation
+
+- **User Guide**: This README covers installation, usage, and configuration
+- **Technical Documentation**: See [TECHNICAL_DOCUMENTATION.md](TECHNICAL_DOCUMENTATION.md) for detailed architecture, API reference, and development guide
+- **Source Code**: Explore the [verifier/](verifier/) directory for implementation details
