@@ -209,45 +209,80 @@ def verify_references(input_path: str, output_file: str = None, output_format: s
     # Detect input type and extract/parse references accordingly
     input_type = detect_input_type(input_path)
     
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[bold blue]{task.description}"),
-        console=progress_console
-    ) as progress:
+    # Use a dummy progress context manager for verbose mode
+    if verbose:
+        # Create a context manager that does nothing
+        from contextlib import nullcontext
+        progress_context = nullcontext()
+    else:
+        progress_context = Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            console=progress_console
+        )
+    
+    with progress_context as progress:
         if input_type == 'pdf':
-            extract_task = progress.add_task("📄 Extracting references from PDF...", total=None)
+            if not verbose:
+                extract_task = progress.add_task("📄 Extracting references from PDF...", total=None)
+            else:
+                console.print("📄 Extracting references from PDF...")
             try:
                 references = grobid_client.extract_references(input_path)
-                progress.update(extract_task, description="✅ PDF processing complete")
+                if not verbose:
+                    progress.update(extract_task, description="✅ PDF processing complete")
+                else:
+                    console.print("✅ PDF processing complete")
                 if not references:
                     console.print("[red]❌ Failed to extract references from PDF[/red]")
                     sys.exit(1)
             except Exception as e:
-                progress.update(extract_task, description="❌ PDF processing failed")
+                if not verbose:
+                    progress.update(extract_task, description="❌ PDF processing failed")
+                else:
+                    console.print("❌ PDF processing failed")
                 console.print(f"[red]❌ Error processing PDF: {e}[/red]")
                 sys.exit(1)
                 
         elif input_type == 'text_file':
-            extract_task = progress.add_task("📝 Parsing references from text file...", total=None)
+            if not verbose:
+                extract_task = progress.add_task("📝 Parsing references from text file...", total=None)
+            else:
+                console.print("📝 Parsing references from text file...")
             try:
                 references = parse_text_file_to_raw(input_path)
-                progress.update(extract_task, description="✅ Text file processing complete")
+                if not verbose:
+                    progress.update(extract_task, description="✅ Text file processing complete")
+                else:
+                    console.print("✅ Text file processing complete")
                 if not references:
                     console.print("[red]❌ No valid references found in text file[/red]")
                     sys.exit(1)
             except Exception as e:
-                progress.update(extract_task, description="❌ Text file processing failed")
+                if not verbose:
+                    progress.update(extract_task, description="❌ Text file processing failed")
+                else:
+                    console.print("❌ Text file processing failed")
                 console.print(f"[red]❌ Error processing text file: {e}[/red]")
                 sys.exit(1)
                 
         else:  # single_reference
-            extract_task = progress.add_task("✏️ Parsing single reference...", total=None)
+            if not verbose:
+                extract_task = progress.add_task("✏️ Parsing single reference...", total=None)
+            else:
+                console.print("✏️ Parsing single reference...")
             try:
                 single_ref = parse_single_reference_to_raw(input_path)
                 references = [single_ref]
-                progress.update(extract_task, description="✅ Reference parsing complete")
+                if not verbose:
+                    progress.update(extract_task, description="✅ Reference parsing complete")
+                else:
+                    console.print("✅ Reference parsing complete")
             except Exception as e:
-                progress.update(extract_task, description="❌ Reference parsing failed")
+                if not verbose:
+                    progress.update(extract_task, description="❌ Reference parsing failed")
+                else:
+                    console.print("❌ Reference parsing failed")
                 console.print(f"[red]❌ Error parsing single reference: {e}[/red]")
                 sys.exit(1)
     
@@ -327,29 +362,33 @@ def verify_references(input_path: str, output_file: str = None, output_format: s
     # Use parallel processing for better performance
     max_workers = min(8, len(references))  # Limit to 8 threads for optimal parallel processing
     
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[bold blue]{task.description}"),
-        BarColumn(),
-        TaskProgressColumn(),
-        TimeRemainingColumn(),
-        console=progress_console,
-        transient=False
-    ) as progress:
-        
-        main_task = progress.add_task(
-            f"🔍 Processing references [0/{len(references)}]", 
-            total=len(references)
+    # Use a dummy progress context manager for verbose mode
+    if verbose:
+        from contextlib import nullcontext
+        progress_context = nullcontext()
+    else:
+        progress_context = Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TimeRemainingColumn(),
+            console=progress_console,
+            transient=False
         )
+    
+    with progress_context as progress:
+        
+        if not verbose:
+            main_task = progress.add_task(
+                f"🔍 Processing references [0/{len(references)}]", 
+                total=len(references)
+            )
         
         if verbose:
             # Sequential processing for verbose mode to maintain ordered output
             for i, ref in enumerate(references, 1):
-                progress.update(
-                    main_task, 
-                    description=f"🔍 Processing reference [{i}/{len(references)}]",
-                    completed=i-1
-                )
+                console.print(f"[dim]🔍 Processing reference [{i}/{len(references)}][/dim]")
                 
                 # Show current reference
                 if isinstance(ref, dict):
@@ -414,7 +453,6 @@ def verify_references(input_path: str, output_file: str = None, output_format: s
                     console.print()
                 
                 verified_references.append(result)
-                progress.update(main_task, completed=i)
         else:
             # Parallel processing for non-verbose mode (much faster)
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -429,11 +467,12 @@ def verify_references(input_path: str, output_file: str = None, output_format: s
                 # Process completed futures as they finish
                 for future in as_completed(future_to_ref):
                     completed_count += 1
-                    progress.update(
-                        main_task,
-                        description=f"🔍 Processing references [{completed_count}/{len(references)}]",
-                        completed=completed_count
-                    )
+                    if not verbose:
+                        progress.update(
+                            main_task,
+                            description=f"🔍 Processing references [{completed_count}/{len(references)}]",
+                            completed=completed_count
+                        )
                     
                     try:
                         result = future.result()
