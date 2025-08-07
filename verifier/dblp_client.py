@@ -194,15 +194,143 @@ class DBLPClient:
         if spaced != original:
             variations.append(spaced)
         
+        # REVERSE ENGINEERING: Generate hyphenated versions from compound words
+        # This handles cases where GROBID extracts "zerocorrelation" but should be "zero-correlation"
+        hyphenated_variations = self._generate_hyphenated_variations(original)
+        for var in hyphenated_variations:
+            if var not in variations:
+                variations.append(var)
+        
         # Remove duplicates while preserving order
         seen = set()
         unique_variations = []
         for var in variations:
-            if var not in seen:
+            if var and var not in seen:
                 seen.add(var)
                 unique_variations.append(var)
         
         return unique_variations
+    
+    def _generate_hyphenated_variations(self, title: str) -> List[str]:
+        """Generate hyphenated variations from compound words"""
+        import re
+        
+        variations = []
+        
+        # Common compound word patterns in cryptography and computer science
+        compound_patterns = [
+            # Cryptography terms
+            (r'\bzerocorrelation\b', 'zero-correlation'),
+            (r'\bzeroknowledge\b', 'zero-knowledge'),
+            (r'\bmultiparty\b', 'multi-party'),
+            (r'\bmultiuser\b', 'multi-user'),
+            (r'\bmultiset\b', 'multi-set'),
+            (r'\bmultitarget\b', 'multi-target'),
+            (r'\bmultipath\b', 'multi-path'),
+            (r'\bmultilinear\b', 'multi-linear'),
+            (r'\bmultivariate\b', 'multi-variate'),
+            (r'\bmulticollision\b', 'multi-collision'),
+            (r'\bmultisignature\b', 'multi-signature'),
+            (r'\bnonlinear\b', 'non-linear'),
+            (r'\bnoninteractive\b', 'non-interactive'),
+            (r'\bnonmaleable\b', 'non-malleable'),
+            (r'\bnoncommitting\b', 'non-committing'),
+            (r'\bnonrepudiation\b', 'non-repudiation'),
+            (r'\bpostquantum\b', 'post-quantum'),
+            (r'\bprecomputation\b', 'pre-computation'),
+            (r'\bpreimage\b', 'pre-image'),
+            (r'\bsublinear\b', 'sub-linear'),
+            (r'\bsubexponential\b', 'sub-exponential'),
+            (r'\bsuperlinear\b', 'super-linear'),
+            (r'\bsuperpolynomial\b', 'super-polynomial'),
+            (r'\bcountermeasure\b', 'counter-measure'),
+            (r'\bciphertext\b', 'cipher-text'),
+            (r'\bplaintext\b', 'plain-text'),
+            (r'\bkeystream\b', 'key-stream'),
+            (r'\bkeyspace\b', 'key-space'),
+            (r'\bkeyrecovery\b', 'key-recovery'),
+            (r'\bkeyschedule\b', 'key-schedule'),
+            (r'\bkeyagreement\b', 'key-agreement'),
+            (r'\bkeyestablishment\b', 'key-establishment'),
+            (r'\bsidechannel\b', 'side-channel'),
+            (r'\bfaultinjection\b', 'fault-injection'),
+            (r'\bfaultattack\b', 'fault-attack'),
+            (r'\bcrosslayer\b', 'cross-layer'),
+            (r'\bhashfunction\b', 'hash-function'),
+            (r'\bhashbased\b', 'hash-based'),
+            (r'\btreebased\b', 'tree-based'),
+            (r'\blatticebased\b', 'lattice-based'),
+            (r'\bcodebased\b', 'code-based'),
+            (r'\bmpcprotocol\b', 'mpc-protocol'),
+            (r'\bdifferentiallinear\b', 'differential-linear'),
+            (r'\blinearapproximation\b', 'linear-approximation'),
+            (r'\bdifferentialapproximation\b', 'differential-approximation'),
+            (r'\bboomerangattack\b', 'boomerang-attack'),
+            (r'\bimpossibleboomerang\b', 'impossible-boomerang'),
+            (r'\bimpossiblelinear\b', 'impossible-linear'),
+            (r'\bimpossiblereduced\b', 'impossible-reduced'),
+            (r'\btweakeyexpansion\b', 'tweakey expansion'),
+            (r'\blineartweakey\b', 'linear tweakey'),
+            (r'\btweakablecipher\b', 'tweakable cipher'),
+            (r'\btweakableciphers\b', 'tweakable ciphers'),
+            (r'\bblockcipher\b', 'block cipher'),
+            (r'\bblockciphers\b', 'block ciphers'),
+            (r'\bstreamcipher\b', 'stream cipher'),
+            (r'\bstreamciphers\b', 'stream ciphers'),
+            
+            # Computer science terms
+            (r'\bmachineLearning\b', 'machine-learning'),
+            (r'\bmachinelearning\b', 'machine-learning'),
+            (r'\bdeeplearning\b', 'deep-learning'),
+            (r'\bneuralnetwork\b', 'neural-network'),
+            (r'\bneuralnetworks\b', 'neural-networks'),
+            (r'\bartificialintelligence\b', 'artificial-intelligence'),
+            (r'\bcomputervision\b', 'computer-vision'),
+            (r'\bnaturallanguage\b', 'natural-language'),
+            (r'\bdatamining\b', 'data-mining'),
+            (r'\bdatastructure\b', 'data-structure'),
+            (r'\bdatastructures\b', 'data-structures'),
+            (r'\bsoftwareengineering\b', 'software-engineering'),
+            (r'\boperatingsystem\b', 'operating-system'),
+            (r'\boperatingsystems\b', 'operating-systems'),
+            (r'\bdistributedsystem\b', 'distributed-system'),
+            (r'\bdistributedsystems\b', 'distributed-systems'),
+            (r'\bcomputerscience\b', 'computer-science'),
+            (r'\bprogramminglanguage\b', 'programming-language'),
+            (r'\bprogramminglanguages\b', 'programming-languages'),
+            (r'\bsoftwaretesting\b', 'software-testing'),
+            (r'\bloadbalancing\b', 'load-balancing'),
+            (r'\bmessagepassing\b', 'message-passing'),
+            (r'\bmemorymanagement\b', 'memory-management'),
+            (r'\bprocedure-call\b', 'procedure-call'),
+            (r'\breal-time\b', 'real-time'),
+            (r'\brealtime\b', 'real-time'),
+            (r'\bparallelprocessing\b', 'parallel-processing'),
+            (r'\bmultiprocessing\b', 'multi-processing'),
+            (r'\bmultithreading\b', 'multi-threading'),
+            (r'\bmulticore\b', 'multi-core'),
+            (r'\bcloudcomputing\b', 'cloud-computing'),
+            (r'\bedgecomputing\b', 'edge-computing'),
+            (r'\bquantumcomputing\b', 'quantum-computing'),
+            (r'\bwirelessnetwork\b', 'wireless-network'),
+            (r'\bwirelessnetworks\b', 'wireless-networks'),
+            (r'\bnetworkprotocol\b', 'network-protocol'),
+            (r'\bnetworkprotocols\b', 'network-protocols'),
+            (r'\binternetofthings\b', 'internet-of-things'),
+            (r'\bcybersecurity\b', 'cyber-security'),
+            (r'\binformationsecurity\b', 'information-security'),
+            (r'\bnetworksecurity\b', 'network-security'),
+        ]
+        
+        # Apply compound patterns
+        current_title = title.lower()
+        for pattern, replacement in compound_patterns:
+            if re.search(pattern, current_title, re.IGNORECASE):
+                new_title = re.sub(pattern, replacement, title, flags=re.IGNORECASE)
+                if new_title != title:
+                    variations.append(new_title)
+        
+        return variations
     
     def _extract_title_keywords(self, title: str, min_word_length: int = 3) -> List[str]:
         """Extract meaningful keywords from title, handling hyphenated terms intelligently"""
