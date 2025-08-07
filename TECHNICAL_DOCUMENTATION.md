@@ -22,29 +22,29 @@
 
 ## Architecture Overview
 
-VerifyRef follows a **sophisticated multi-stage pipeline architecture** with **parallel processing** and **intelligent caching**. The system is designed as a comprehensive fraud detection pipeline that goes beyond simple database lookups.
+VerifyRef follows a sophisticated multi stage pipeline architecture with parallel processing and intelligent caching. The system is designed as a comprehensive fraud detection pipeline that goes beyond simple database lookups.
 
-### High-Level Pipeline
+### High Level Pipeline
 ```
-Input Detection → GROBID Processing → Reference Parsing → Multi-DB Verification → Classification → Fraud Detection → AI Analysis → Output Formatting → Terminal/File Display
+Input Detection → GROBID Processing → Reference Parsing → Multi DB Verification → Classification → Fraud Detection → AI Analysis → Output Formatting → Terminal/File Display
 ```
 
 **Modular Processing Flow**:
 ```
 utils/input_parser.py    → Input type detection and GROBID processing
 extractor/               → Reference extraction and normalization  
-verifier/               → Multi-database verification and classification
+verifier/               → Multi database verification and classification
 utils/output_handler.py → File output and format handling
-utils/terminal_display.py → Rich-formatted terminal presentation
+utils/terminal_display.py → Rich formatted terminal presentation
 ```
 
 ### Core Design Principles
 
 1. **Modular Architecture**: Specialized utility modules for input, output, and configuration
-2. **Performance-First Design**: Parallel processing, caching, connection pooling
-3. **Context-Aware Processing**: Domain-specific optimization for CS/Bio papers
-4. **Multi-layered Verification**: Traditional similarity + AI analysis + pattern recognition
-5. **Thread-Safe Architecture**: Proper locking for concurrent operations
+2. **Performance First Design**: Parallel processing, caching, connection pooling
+3. **Context Aware Processing**: Domain specific optimization for CS/Bio papers
+4. **Multi layered Verification**: Traditional similarity + AI analysis + pattern recognition
+5. **Thread Safe Architecture**: Proper locking for concurrent operations
 6. **Configurable Rigor**: Adjustable sensitivity for different use cases
 7. **Clean Separation**: Terminal formatting isolated from file outputs
 
@@ -251,7 +251,7 @@ def classify_reference(self, extracted_ref: Dict[str, Any], search_results: List
 
 ---
 
-## Data Flow & Pipeline
+## Data Flow and Pipeline
 
 ### 1. PDF Processing Flow
 ```
@@ -260,7 +260,7 @@ PDF File → GROBID Service → XML Response → Reference Extraction → Raw Re
 
 ### 2. Reference Processing Flow
 ```
-Raw Reference → Parsing & Cleaning → Database Search → Results Aggregation → Classification
+Raw Reference → Parsing and Cleaning → Database Search → Results Aggregation → Classification
 ```
 
 ### 3. Parallel Processing Architecture
@@ -275,7 +275,7 @@ with ThreadPoolExecutor(max_workers=min(8, len(references))) as executor:
 
 ### 4. Caching Strategy
 ```python
-# Thread-safe intelligent caching
+# Thread safe intelligent caching
 def cached_database_search(verifier, parsed_ref, verbose=False):
     cache_key = get_cache_key(parsed_ref)  # title|author|year
     
@@ -302,7 +302,7 @@ def cached_database_search(verifier, parsed_ref, verbose=False):
 - **Load Balancing**: Intelligent task distribution based on reference count
 
 ### 2. Intelligent Caching
-- **Thread-Safe Implementation**: Using `threading.Lock()`
+- **Thread Safe Implementation**: Using `threading.Lock()`
 - **Cache Key Generation**: Normalized title + first author + year
 - **Hit Rate Tracking**: Performance metrics and reporting
 - **Memory Management**: Size limits and cleanup
@@ -327,7 +327,7 @@ BIOMEDICAL_KEYWORDS = frozenset([
 
 ---
 
-## Classification & Fraud Detection
+## Classification and Fraud Detection
 
 ### 1. Advanced Fraud Detection
 
@@ -348,7 +348,7 @@ def _detect_fraud(self, extracted_ref: Dict[str, Any], search_results: List[Dict
 ```
 
 **False Positive Prevention**:
-- Skip single-author papers (name variations common)
+- Skip single author papers (name variations common)
 - Require multiple database presence for high confidence
 - Consider established papers (3+ database sources) as legitimate
 
@@ -358,16 +358,67 @@ def _detect_fraud(self, extracted_ref: Dict[str, Any], search_results: List[Dict
 - Domain expertise validation
 - Enhanced confidence scoring for crypto research
 
-### 3. AI-Powered Analysis (`verifier/ai_verifier.py`)
+### 3. AI Powered Analysis (`verifier/ai_verifier.py`)
 
-**Optional GPT Integration**:
+**Optional AI Integration**:
 ```python
 def verify_reference(self, extracted_ref: Dict[str, Any], search_results: List[Dict[str, Any]]) -> AIVerificationResult:
     # Advanced pattern recognition
     # Contextual understanding
     # Red flag detection
-    # 18% weight when enabled
+    # Configurable weight when enabled (default 50%)
 ```
+
+**Database-Dependent AI Decision Integration**:
+The AI verification system uses a conservative database-dependent approach to prevent over-optimism:
+
+1. **Database Evidence Priority**: AI influence automatically scales based on database evidence strength
+2. **Conservative Override Requirements**: Multiple safety checks and high thresholds prevent AI false positives
+3. **Dynamic Weight Adjustment**: AI weight ranges from 20% (strong DB evidence) to 50% (weak DB evidence)
+4. **Enhanced Fraud Detection**: AI fraud detection is more trusted when database evidence is weak
+
+**Database-Dependent AI Weight Calculation**:
+```python
+def _adjust_ai_weight_by_db_evidence(self, base_weight, db_evidence):
+    if db_evidence > 0.8:
+        # Strong database evidence - reduce AI influence to 20%
+        return base_weight * AI_WEIGHT_WITH_STRONG_DB / base_weight
+    elif db_evidence > 0.6:
+        # Moderate database evidence - reduce AI influence to 30% 
+        return base_weight * AI_WEIGHT_WITH_MODERATE_DB / base_weight
+    elif db_evidence > 0.4:
+        # Weak database evidence - reduce AI influence to 40%
+        return base_weight * AI_WEIGHT_WITH_WEAK_DB / base_weight
+    else:
+        # Very weak database evidence - allow up to 50% AI influence
+        return min(base_weight * 1.2, AI_WEIGHT_WITH_VERY_WEAK_DB)
+```
+
+**Conservative AI Override Logic**:
+```python
+def _handle_ai_authentic_db_problematic(self, db_classification, db_confidence, reasons, ai_verification):
+    # Enhanced safety checks for AI override
+    safety_checks = [
+        db_evidence < required_db_weakness,  # Database evidence must be weak
+        len(ai_verification.positive_indicators) >= min_required_indicators,  # Sufficient positive evidence
+        len(ai_verification.red_flags) == 0,  # No red flags allowed for authentic claims
+        ai_verification.confidence - db_confidence >= min_confidence_gap,  # Significant confidence gap
+        len(ai_verification.reasoning) >= 50  # Substantial reasoning required
+    ]
+    
+    if all(safety_checks):
+        # AI override approved with conservative weighting
+        return upgraded_classification, conservative_confidence, enhanced_reasons
+    else:
+        # AI override rejected - trust database evidence
+        return db_classification, reduced_confidence, safety_concern_reasons
+```
+
+**Key Database-Dependent Features**:
+- **Evidence Strength Assessment**: Both database and AI evidence quality are calculated independently
+- **Fraud Detection Enhancement**: AI concerns are taken more seriously when database evidence is weak
+- **Conservative Upgrades**: AI can never upgrade FABRICATED directly to AUTHENTIC (only to SUSPICIOUS)
+- **Safety Validation**: Multiple checks prevent AI from overriding strong database evidence inappropriately
 
 ---
 
@@ -471,29 +522,77 @@ def apply_runtime_config(args):
     # Feature enabling/disabling
 ```
 
+### 4. Database-Dependent AI Configuration
+
+**User Configurable Settings** (in config.py):
+```python
+# Base AI Model and Weight Configuration
+AI_MODEL = "gpt-4o"  # Available: gpt-4o, gpt-4o-mini, gpt-4-turbo, gpt-3.5-turbo
+AI_WEIGHT = 0.50  # Base AI weight, automatically adjusted by database evidence
+
+# Database-Dependent AI Weights (prevents AI over-optimism)
+AI_WEIGHT_WITH_STRONG_DB = 0.2      # 20% AI influence with strong database evidence (>0.8)
+AI_WEIGHT_WITH_MODERATE_DB = 0.3    # 30% AI influence with moderate database evidence (0.6-0.8)
+AI_WEIGHT_WITH_WEAK_DB = 0.4        # 40% AI influence with weak database evidence (0.4-0.6)
+AI_WEIGHT_WITH_VERY_WEAK_DB = 0.5   # 50% max AI influence with very weak database evidence (<0.4)
+
+# Conservative AI Override Requirements (prevents false positives)
+AI_OVERRIDE_FABRICATED_THRESHOLD = 0.85     # Very high bar for overriding fabricated classification
+AI_OVERRIDE_AUTHOR_MANIP_THRESHOLD = 0.80   # High bar for overriding author manipulation
+AI_OVERRIDE_SUSPICIOUS_THRESHOLD = 0.70     # Moderate bar for overriding suspicious
+AI_MIN_POSITIVE_INDICATORS_HIGH_CONF = 3    # Required indicators for high confidence AI claims
+AI_MIN_CONFIDENCE_GAP = 0.3                 # Minimum confidence gap for AI override
+```
+
+**Database-Dependent AI Integration**:
+```python
+DATABASE_CONFIG = {
+    "ai_verification": {
+        "enabled": "false",  # Disabled by default (paid models)
+        "model": AI_MODEL or os.getenv("AI_MODEL", "gpt-4o"),
+        "base_verification_weight": AI_WEIGHT or float(os.getenv("AI_WEIGHT", "0.40")),
+        "database_dependent_weighting": True,  # AI weight scales with database evidence
+        "conservative_override": True,  # Requires exceptional evidence for AI override
+        "fraud_detection_enhanced": True,  # Enhanced when database evidence is weak
+        "available_models": {
+            "gpt-4o": {"cost_level": "high", "recommended_for": "Critical research verification"},
+            "gpt-4o-mini": {"cost_level": "low", "recommended_for": "General academic verification"},
+            "gpt-4-turbo": {"cost_level": "medium-high", "recommended_for": "Balanced cost-performance"},
+            "gpt-3.5-turbo": {"cost_level": "very-low", "recommended_for": "Basic verification"}
+        }
+    }
+}
+```
+
+**Key Features of Database-Dependent AI**:
+- **Conservative Approach**: AI influence is inversely proportional to database evidence strength
+- **Safety First**: Multiple validation layers prevent AI over-optimism
+- **Enhanced Fraud Detection**: AI fraud detection is more trusted when database evidence is weak
+- **Evidence-Based Scaling**: AI weight automatically adjusts from 20% (strong DB) to 50% (weak DB)
+
 ---
 
-## Error Handling & Logging
+## Error Handling and Logging
 
 ### 1. Logging Architecture
 ```python
 def setup_logging(verbose=False):
     # Rich library integration for beautiful output
     # Hierarchical log levels
-    # Performance-aware logging
+    # Performance aware logging
 ```
 
 ### 2. Error Recovery Strategies
 - **Graceful Degradation**: Continue processing if some databases fail
 - **Retry Logic**: Configurable retry attempts with exponential backoff
 - **Fallback Mechanisms**: Alternative search strategies
-- **User-Friendly Error Messages**: Clear guidance for common issues
+- **User Friendly Error Messages**: Clear guidance for common issues
 
 ### 3. Progress Reporting
 ```python
-# Rich progress bars with real-time updates
+# Rich progress bars with real time updates
 with Progress(SpinnerColumn(), TextColumn(), BarColumn(), ...) as progress:
-    main_task = progress.add_task("🔍 Processing references", total=len(references))
+    main_task = progress.add_task("Processing references", total=len(references))
 ```
 
 ---
@@ -562,12 +661,13 @@ class CustomAIVerifier(AIReferenceVerifier):
 
 ## Key Innovations
 
-1. **Hybrid Sequential-Parallel Architecture**: Sequential DB searches within parallel reference processing
-2. **Context-Aware Database Selection**: Different strategies for different research domains  
-3. **Multi-layered Fraud Detection**: Traditional similarity + AI analysis + pattern recognition
-4. **Performance-First Design**: Caching, connection pooling, intelligent timeouts
+1. **Hybrid Sequential Parallel Architecture**: Sequential DB searches within parallel reference processing
+2. **Context Aware Database Selection**: Different strategies for different research domains  
+3. **Multi layered Fraud Detection**: Traditional similarity + AI analysis + pattern recognition
+4. **Performance First Design**: Caching, connection pooling, intelligent timeouts
 5. **Configurable Rigor Levels**: Adjustable sensitivity for different use cases
-6. **Thread-Safe Design**: Proper locking for concurrent operations
+6. **Thread Safe Design**: Proper locking for concurrent operations
+7. **Enhanced AI Integration**: Configurable AI weight and model selection with independent analysis mode
 
 ---
 

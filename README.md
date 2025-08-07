@@ -61,6 +61,7 @@ This tool helps reviewers quickly identify potentially fabricated references and
 
 - **Multi-Database Verification**: Cross-references across 7+ academic databases
 - **PDF Processing**: Extracts and parses references from academic PDFs using GROBID
+- **Smart Decision Logic**: Intelligent AI-database consensus system that reduces false positives/negatives
 - **AI-Powered Analysis**: Optional GPT-based fraud detection and pattern recognition
 - **Context-Aware Search**: Optimized database selection for different research domains
 - **5-Category Classification**: Comprehensive authenticity assessment system
@@ -195,17 +196,39 @@ SPRINGER_API_KEY = "your-key-here"  # ← Optional
 
 ### AI-Powered Verification
 
-Optional GPT-based analysis for enhanced fraud detection.
+Database-dependent AI analysis system that prevents over-optimistic AI decisions through conservative evidence-based thresholds.
 
-1. Set `OPENAI_API_KEY` in `config.py`
-2. Enable with `--enable-ai` flag:
+**Key Features:**
+- **Database-Dependent Logic**: AI influence automatically scales based on database evidence strength
+- **Conservative Override Requirements**: Multiple safety checks and high thresholds prevent AI over-optimism
+- **Enhanced Fraud Detection**: AI fraud detection is enhanced when database evidence is weak
+- **Evidence-Based Weighting**: Strong database evidence (>0.8) reduces AI influence to 20%
 
+**Configuration** (in `config.py`):
+```python
+AI_WEIGHT = 0.50  # Base AI weight, automatically adjusted by database evidence
+
+# Database-Dependent AI Weights (prevents over-optimism)
+AI_WEIGHT_WITH_STRONG_DB = 0.2      # 20% AI influence with strong database evidence
+AI_WEIGHT_WITH_MODERATE_DB = 0.3    # 30% AI influence with moderate database evidence  
+AI_WEIGHT_WITH_WEAK_DB = 0.4        # 40% AI influence with weak database evidence
+AI_WEIGHT_WITH_VERY_WEAK_DB = 0.5   # 50% max AI influence with very weak database evidence
+
+# Conservative AI Override Requirements
+AI_MIN_POSITIVE_INDICATORS_HIGH_CONF = 3  # Required indicators for high confidence claims
+AI_MIN_CONFIDENCE_GAP = 0.3               # Minimum confidence gap for AI override
+```
+
+**Usage:**
 ```bash
 python verifyref.py paper.pdf --enable-ai
 ```
 
-**Model**: `gpt-4o-mini` (default) - Cost-effective with structured output support  
-**Analysis**: Pattern recognition, author collaboration, timeline validation, venue relationships
+**Analysis Includes**: Pattern recognition, author collaboration validation, timeline analysis, venue relationship verification
+
+**Safety Features**: AI cannot claim authentic while having red flags, requires exceptional evidence to override strong database matches, multiple positive indicators required for high-confidence claims.
+
+See `SMART_DECISION_LOGIC.md` for detailed database-dependent decision algorithms.
 
 ## Usage Scenarios
 

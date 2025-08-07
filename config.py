@@ -41,6 +41,35 @@ SEMANTIC_SCHOLAR_API_KEY = ""  # ← Add your key here
 # Get it from: https://platform.openai.com/api-keys
 OPENAI_API_KEY = "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"  # ← Add your key here
 
+# AI Model Selection (choose which OpenAI model to use for verification)
+# Available options: "gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"
+# Cost levels: gpt-4o (high), gpt-4o-mini (low), gpt-4-turbo (medium-high), gpt-3.5-turbo (very-low)
+AI_MODEL = "gpt-4o"  # ← Change this to select your preferred AI model
+
+# AI Decision Weight (how much influence AI has in final verification decision)
+# Range: 0.0 to 1.0 (0% to 100% influence)
+# Recommended: 0.35-0.50 for balanced analysis, higher for AI-heavy decisions
+AI_WEIGHT = 0.50  # ← Increase this to give AI more influence (currently 50%)
+
+# Smart Decision Making Configuration (reduces false positives/negatives)
+# These thresholds control when AI can override traditional database decisions
+AI_OVERRIDE_FABRICATED_THRESHOLD = 0.85  # High bar for overriding fabricated classification
+AI_OVERRIDE_AUTHOR_MANIP_THRESHOLD = 0.80  # High bar for overriding author manipulation
+AI_OVERRIDE_SUSPICIOUS_THRESHOLD = 0.70  # Moderate bar for overriding suspicious
+AI_FRAUD_DETECTION_SENSITIVITY = 0.75  # How sensitive AI fraud detection should be
+
+# Database-Dependent AI Decision Making (prevents AI over-optimism)
+# Controls how much AI influence is allowed based on database evidence strength
+AI_WEIGHT_WITH_STRONG_DB = 0.2   # Reduced AI influence when database evidence is strong (>0.8)
+AI_WEIGHT_WITH_MODERATE_DB = 0.3 # Moderate AI influence with moderate database evidence (0.6-0.8)
+AI_WEIGHT_WITH_WEAK_DB = 0.4     # Normal AI influence with weak database evidence (0.4-0.6)
+AI_WEIGHT_WITH_VERY_WEAK_DB = 0.5 # Maximum AI influence with very weak database evidence (<0.4)
+
+# Conservative AI Override Requirements
+AI_MIN_POSITIVE_INDICATORS_HIGH_CONF = 3  # Required positive indicators for high confidence AI claims (>0.8)
+AI_MIN_POSITIVE_INDICATORS_MED_CONF = 2   # Required positive indicators for medium confidence AI claims (>0.7)
+AI_MIN_CONFIDENCE_GAP = 0.3              # Minimum confidence gap required for AI to override database
+
 # NCBI/PubMed API Key (optional, for higher PubMed rate limits)
 # Get it from: https://www.ncbi.nlm.nih.gov/account/settings/
 NCBI_API_KEY = ""  # ← Add your key here
@@ -64,7 +93,7 @@ except ImportError:
 # GROBID Configuration
 GROBID_CONFIG = {
     "base_url": os.getenv("GROBID_URL", "http://localhost:8070"),
-    "timeout": int(os.getenv("GROBID_TIMEOUT", "90")),  # Increased timeout for better processing
+    "timeout": int(os.getenv("GROBID_TIMEOUT", "300")),  # Increased timeout for better processing
     "max_retries": int(os.getenv("GROBID_MAX_RETRIES", "3")),
     
     # Enhanced processing options for higher accuracy
@@ -168,18 +197,62 @@ DATABASE_CONFIG = {
         "respect_rate_limits": True
     },
     
-    # AI Verification Configuration
+    # AI Verification Configuration (Enhanced with Model Selection)
     "ai_verification": {
-        "enabled": os.getenv("ENABLE_AI_VERIFICATION", "false").lower() == "true",  # Disabled by default - users must explicitly enable
+        "enabled": os.getenv("ENABLE_AI_VERIFICATION", "false").lower() == "true",  # Disabled by default (paid models)
         
         # OpenAI API Key - Use config first, then environment variable
         "openai_api_key": OPENAI_API_KEY or os.getenv("OPENAI_API_KEY", ""),  # No default key - user must provide
         
-        "model": "gpt-4o-mini",  # Better compatibility and lower cost - supports JSON format
-        "timeout": 30,
-        "max_tokens": 1500,
+        # Available Models (ordered by capability and cost)
+        "available_models": {
+            "gpt-4o": {
+                "name": "GPT-4 Omni",
+                "description": "Most capable model, highest accuracy",
+                "cost_level": "high",
+                "supports_json": True,
+                "recommended_for": "Critical research verification"
+            },
+            "gpt-4o-mini": {
+                "name": "GPT-4 Omni Mini", 
+                "description": "Balanced performance and cost",
+                "cost_level": "low",
+                "supports_json": True,
+                "recommended_for": "General academic verification"
+            },
+            "gpt-4-turbo": {
+                "name": "GPT-4 Turbo",
+                "description": "High capability, faster responses",
+                "cost_level": "medium-high", 
+                "supports_json": True,
+                "recommended_for": "Professional verification workflows"
+            },
+            "gpt-3.5-turbo": {
+                "name": "GPT-3.5 Turbo",
+                "description": "Fast and economical option",
+                "cost_level": "very-low",
+                "supports_json": False,
+                "recommended_for": "Basic verification tasks"
+            }
+        },
+        
+        # Selected Model Configuration
+        "model": AI_MODEL or os.getenv("AI_MODEL", "gpt-4o-mini"),  # Use config variable first, then env var, then default
+        "fallback_model": "gpt-3.5-turbo",  # Fallback if primary model fails
+        
+        # Performance Settings
+        "timeout": 45,  # Increased timeout for enhanced prompts
+        "max_tokens": 2500,  # Increased for more detailed analysis
         "temperature": 0.1,  # Low temperature for consistent analysis
-        "verification_weight": 0.18  # 18% weight when AI is enabled
+        
+        # Decision Weight Configuration
+        "verification_weight": AI_WEIGHT or float(os.getenv("AI_WEIGHT", "0.35")),  # Use config variable first, then env var, then default
+        "independent_analysis": True,  # AI makes decisions independent of database results
+        
+        # Advanced Settings
+        "enable_model_fallback": True,  # Try fallback model if primary fails
+        "cache_responses": True,  # Cache AI responses to reduce costs
+        "detailed_reasoning": True,  # Include detailed reasoning in responses
     }
 }
 

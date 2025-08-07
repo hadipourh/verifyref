@@ -25,6 +25,7 @@ from enum import Enum
 from utils.helpers import calculate_text_similarity, normalize_text
 from utils.academic_matching import calculate_venue_similarity, calculate_author_similarity
 from config import CLASSIFICATION_CONFIG
+import config
 
 logger = logging.getLogger(__name__)
 
@@ -796,8 +797,8 @@ class ReferenceClassifier:
                                 reasons: List[str],
                                 ai_verification) -> Tuple[ClassificationResult, float, List[str]]:
         """
-        Incorporate AI verification results into the final classification
-        SLIGHTLY PESSIMISTIC approach - AI provides valuable fraud detection insight
+        Smart AI integration with reduced false positives/negatives
+        Uses multi-factor decision making instead of pure AI override
         
         Args:
             classification: Current classification result
@@ -811,28 +812,11 @@ class ReferenceClassifier:
         if not ai_verification:
             return classification, confidence, reasons
         
-        # Dynamic AI weight based on AI confidence and decision quality
-        base_ai_weight = min(0.2, self.ai_verifier.get_verification_weight() if self.ai_verifier else 0.2)
+        # Calculate database evidence strength
+        database_evidence = self._calculate_database_evidence_strength(classification, confidence)
         
-        # Increase AI weight for very positive decisions
-        if (ai_verification.is_authentic and 
-            ai_verification.confidence > 0.8 and 
-            len(ai_verification.positive_indicators) >= 2):
-            # Very positive AI decision - increase weight significantly
-            ai_weight = min(0.35, base_ai_weight * 1.75)
-        elif (ai_verification.is_authentic and 
-              ai_verification.confidence > 0.75 and 
-              len(ai_verification.positive_indicators) >= 1):
-            # Moderately positive AI decision - increase weight moderately
-            ai_weight = min(0.3, base_ai_weight * 1.5)
-        elif ai_verification.confidence > 0.8:
-            # High confidence in any decision - increase weight slightly
-            ai_weight = min(0.25, base_ai_weight * 1.25)
-        else:
-            # Standard weight for normal decisions
-            ai_weight = base_ai_weight
-            
-        traditional_weight = 1.0 - ai_weight
+        # Calculate AI evidence strength (not just confidence)
+        ai_evidence = self._calculate_ai_evidence_strength(ai_verification)
         
         # Map AI authenticity to our classification system
         if ai_verification.is_authentic:
@@ -847,81 +831,326 @@ class ReferenceClassifier:
             else:
                 ai_classification = ClassificationResult.SUSPICIOUS
         
-        # SLIGHTLY PESSIMISTIC combination - give AI fraud detection more weight
-        if classification == ai_classification:
-            # Both agree - confidence boost varies based on AI strength
-            if (ai_verification.is_authentic and 
-                ai_verification.confidence > 0.8 and 
-                len(ai_verification.positive_indicators) >= 2):
-                # Very strong AI positive decision - significant boost
-                confidence_boost = 0.12
-                new_reasons = reasons + [f"AI strongly confirms authenticity: {ai_verification.reasoning[:80]}..."]
-            elif (ai_verification.is_authentic and 
-                  ai_verification.confidence > 0.75):
-                # Strong AI positive decision - good boost
-                confidence_boost = 0.09
-                new_reasons = reasons + [f"AI confirms with high confidence: {ai_verification.reasoning[:80]}..."]
-            else:
-                # Standard agreement boost
-                confidence_boost = 0.07
-                new_reasons = reasons + [f"AI analysis confirms: {ai_verification.reasoning[:80]}..."]
-            
-            new_confidence = min(1.0, confidence + confidence_boost)
-        elif classification == ClassificationResult.AUTHENTIC and ai_classification != ClassificationResult.AUTHENTIC:
-            # Traditional says authentic, AI disagrees - take AI concerns seriously
-            if ai_verification.confidence > 0.7 and len(ai_verification.red_flags) >= 1:  # Lowered threshold
-                # AI has reasonable concerns - be more responsive
-                new_classification = ai_classification if ai_verification.confidence > 0.8 else ClassificationResult.SUSPICIOUS
-                new_confidence = traditional_weight * confidence * 0.7 + ai_weight * (1 - ai_verification.confidence * 0.3)
-                new_reasons = reasons + [f"AI raised concerns: {', '.join(ai_verification.red_flags[:2])}"]
-            else:
-                # Keep authentic but note AI concerns
-                new_classification = ClassificationResult.SUSPICIOUS  # More cautious default
-                new_confidence = confidence * 0.9
-                new_reasons = reasons + ["AI suggests caution warranted"]
-        elif classification != ClassificationResult.AUTHENTIC and ai_classification == ClassificationResult.AUTHENTIC:
-            # Traditional says problematic, AI says authentic - consider AI strength
-            ai_override_threshold = 0.75
-            
-            # Lower threshold for very positive AI decisions
-            if (ai_verification.confidence > 0.8 and 
-                len(ai_verification.positive_indicators) >= 2):
-                ai_override_threshold = 0.65  # More willing to trust very positive AI
-            elif (ai_verification.confidence > 0.75 and 
-                  len(ai_verification.positive_indicators) >= 1):
-                ai_override_threshold = 0.7   # Moderately more willing to trust positive AI
-            
-            if ai_verification.confidence > ai_override_threshold:
-                # AI suggests legitimacy with sufficient confidence
-                if classification == ClassificationResult.FABRICATED:
-                    new_classification = ClassificationResult.SUSPICIOUS
-                elif classification == ClassificationResult.AUTHOR_MANIPULATION:
-                    new_classification = ClassificationResult.SUSPICIOUS  # Stay cautious
-                else:
-                    new_classification = classification  # Keep suspicious as is
-                
-                # Higher AI weight for very positive decisions
-                ai_influence = ai_weight * ai_verification.confidence
-                if (ai_verification.confidence > 0.8 and 
-                    len(ai_verification.positive_indicators) >= 2):
-                    ai_influence *= 1.2  # Boost influence for very positive AI
-                
-                new_confidence = traditional_weight * confidence * 0.85 + ai_influence
-                new_reasons = reasons + [f"AI suggests legitimacy: {ai_verification.reasoning[:70]}..."]
-            else:
-                new_classification = classification
-                new_confidence = confidence
-                new_reasons = reasons + ["AI analysis inconclusive"]
+        # Smart consensus-based decision making
+        return self._make_consensus_decision(
+            classification, confidence, reasons,
+            ai_classification, ai_verification,
+            database_evidence, ai_evidence
+        )
+    
+    def _calculate_database_evidence_strength(self, classification: ClassificationResult, confidence: float) -> float:
+        """
+        Calculate how strong the database evidence is
+        Returns value between 0.0 (weak) and 1.0 (very strong)
+        """
+        base_strength = confidence
+        
+        # Boost for authentic classifications with high similarity
+        if classification == ClassificationResult.AUTHENTIC:
+            if confidence > 0.8:
+                base_strength += 0.1  # Very high similarity = strong evidence
+            elif confidence > 0.6:
+                base_strength += 0.05  # Good similarity = moderate boost
+        
+        # Reduce strength for problematic classifications with low confidence
+        elif classification in [ClassificationResult.SUSPICIOUS, ClassificationResult.FABRICATED]:
+            if confidence < 0.6:
+                base_strength *= 0.8  # Low confidence = weaker evidence
+        
+        return min(1.0, base_strength)
+    
+    def _calculate_ai_evidence_strength(self, ai_verification) -> float:
+        """
+        Calculate AI evidence strength based on multiple factors, not just confidence
+        Returns value between 0.0 (weak) and 1.0 (very strong)
+        """
+        base_strength = ai_verification.confidence
+        
+        # Positive indicators boost AI strength
+        positive_count = len(ai_verification.positive_indicators)
+        if positive_count >= 3:
+            base_strength += 0.15  # Many positive indicators
+        elif positive_count >= 2:
+            base_strength += 0.1   # Some positive indicators
+        elif positive_count >= 1:
+            base_strength += 0.05  # Few positive indicators
+        
+        # Red flags reduce AI strength for authentic claims
+        if ai_verification.is_authentic:
+            red_flag_count = len(ai_verification.red_flags)
+            if red_flag_count >= 2:
+                base_strength -= 0.1  # AI says authentic but has red flags
+            elif red_flag_count >= 1:
+                base_strength -= 0.05
+        
+        # Very high confidence needs additional validation
+        if ai_verification.confidence > 0.9:
+            base_strength *= 0.95  # Slight penalty for overconfidence
+        
+        return max(0.0, min(1.0, base_strength))
+    
+    def _make_consensus_decision(self, 
+                                db_classification: ClassificationResult, db_confidence: float, reasons: List[str],
+                                ai_classification: ClassificationResult, ai_verification,
+                                db_evidence: float, ai_evidence: float) -> Tuple[ClassificationResult, float, List[str]]:
+        """
+        Make final decision based on consensus between database and AI evidence
+        DATABASE-DEPENDENT APPROACH: AI decisions are heavily weighted by database evidence quality
+        """
+        # Get AI weight from configuration - but make it dependent on database evidence
+        base_ai_weight = min(0.4, self.ai_verifier.get_verification_weight() if self.ai_verifier else 0.3)
+        
+        # Adjust AI weight based on database evidence strength - KEY CHANGE
+        if db_evidence > 0.8:
+            # Strong database evidence - reduce AI influence significantly
+            adjusted_ai_weight = base_ai_weight * getattr(config, 'AI_WEIGHT_WITH_STRONG_DB', 0.2) / base_ai_weight
+            database_trust_factor = "strong"
+        elif db_evidence > 0.6:
+            # Moderate database evidence - moderate AI influence
+            adjusted_ai_weight = base_ai_weight * getattr(config, 'AI_WEIGHT_WITH_MODERATE_DB', 0.3) / base_ai_weight
+            database_trust_factor = "moderate"
+        elif db_evidence > 0.4:
+            # Weak database evidence - normal AI influence
+            adjusted_ai_weight = base_ai_weight * getattr(config, 'AI_WEIGHT_WITH_WEAK_DB', 0.4) / base_ai_weight
+            database_trust_factor = "weak"
         else:
-            # Both problematic but different types - trust traditional methods more
-            new_classification = classification  # Keep traditional classification
-            new_confidence = traditional_weight * confidence + ai_weight * ai_verification.confidence * 0.7
-            new_reasons = reasons + [f"AI provides context: {ai_verification.reasoning[:60]}..."]
+            # Very weak database evidence - AI can have more influence but still limited
+            max_ai_weight = getattr(config, 'AI_WEIGHT_WITH_VERY_WEAK_DB', 0.5)
+            adjusted_ai_weight = min(base_ai_weight * 1.2, max_ai_weight)
+            database_trust_factor = "very_weak"
         
-        # Add positive indicators when present
-        if ai_verification.positive_indicators:
-            new_reasons.append(f"AI positive indicators: {', '.join(ai_verification.positive_indicators[:2])}")
+        traditional_weight = 1.0 - adjusted_ai_weight
         
-        return (new_classification if 'new_classification' in locals() else classification,
-                new_confidence if 'new_confidence' in locals() else confidence,
-                new_reasons if 'new_reasons' in locals() else reasons)
+        # Case 1: Both agree - strengthen the decision (but still database-dependent)
+        if db_classification == ai_classification:
+            if db_classification == ClassificationResult.AUTHENTIC:
+                # Boost varies based on database evidence strength
+                if db_evidence > 0.8:
+                    confidence_boost = min(0.15, (db_evidence + ai_evidence) * 0.12)
+                elif db_evidence > 0.6:
+                    confidence_boost = min(0.10, (db_evidence + ai_evidence) * 0.08)
+                else:
+                    confidence_boost = min(0.05, (db_evidence + ai_evidence) * 0.05)
+                    
+                new_confidence = min(0.99, db_confidence + confidence_boost)
+                new_reasons = reasons + [f"Database ({database_trust_factor}) and AI both confirm authenticity (AI: {ai_verification.confidence:.2f})"]
+            else:
+                confidence_boost = min(0.08, (db_evidence + ai_evidence) * 0.06)
+                new_confidence = min(0.95, db_confidence + confidence_boost)
+                new_reasons = reasons + [f"Database ({database_trust_factor}) and AI both identify concerns (AI: {ai_verification.confidence:.2f})"]
+            
+            return db_classification, new_confidence, new_reasons
+        
+        # Case 2: AI says authentic, database says problematic
+        elif ai_classification == ClassificationResult.AUTHENTIC and db_classification != ClassificationResult.AUTHENTIC:
+            return self._handle_ai_authentic_db_problematic(
+                db_classification, db_confidence, reasons, ai_verification, db_evidence, ai_evidence
+            )
+        
+        # Case 3: Database says authentic, AI says problematic  
+        elif db_classification == ClassificationResult.AUTHENTIC and ai_classification != ClassificationResult.AUTHENTIC:
+            return self._handle_db_authentic_ai_problematic(
+                db_classification, db_confidence, reasons, ai_verification, db_evidence, ai_evidence
+            )
+        
+        # Case 4: Both problematic but different types - favor database more strongly
+        else:
+            # Use evidence strength but give database more weight in tie situations
+            if db_evidence > ai_evidence + 0.15:  # Reduced threshold for database preference
+                new_confidence = traditional_weight * db_confidence + adjusted_ai_weight * ai_verification.confidence * 0.5
+                new_reasons = reasons + [f"Database evidence ({database_trust_factor}) takes precedence"]
+                return db_classification, new_confidence, new_reasons
+            elif ai_evidence > db_evidence + 0.3:  # Higher threshold for AI preference
+                new_confidence = traditional_weight * db_confidence * 0.6 + adjusted_ai_weight * ai_verification.confidence
+                new_reasons = reasons + [f"Exceptional AI evidence overrides weak database: {ai_verification.reasoning[:50]}..."]
+                return ai_classification, new_confidence, new_reasons
+            else:  # Similar strength - strongly favor conservative database-based decision
+                new_confidence = traditional_weight * db_confidence + adjusted_ai_weight * ai_verification.confidence * 0.6
+                new_reasons = reasons + [f"Mixed evidence - database ({database_trust_factor}) takes precedence"]
+                # Choose more conservative classification
+                if db_classification == ClassificationResult.SUSPICIOUS or ai_classification == ClassificationResult.SUSPICIOUS:
+                    return ClassificationResult.SUSPICIOUS, new_confidence, new_reasons
+                else:
+                    return db_classification, new_confidence, new_reasons
+    
+    def _handle_ai_authentic_db_problematic(self, db_classification, db_confidence, reasons, ai_verification, db_evidence, ai_evidence):
+        """
+        Handle case where AI says authentic but database says problematic
+        CONSERVATIVE APPROACH: Database evidence takes precedence, AI must provide exceptional evidence to override
+        """
+        
+        # Calculate minimum evidence thresholds for AI override (made more conservative)
+        if db_classification == ClassificationResult.FABRICATED:
+            required_ai_strength = getattr(config, 'AI_OVERRIDE_FABRICATED_THRESHOLD', 0.85)
+            required_db_weakness = 0.4  # Database evidence must be weak to consider override
+            max_upgrade = ClassificationResult.SUSPICIOUS  # Never upgrade fabricated directly to authentic
+        elif db_classification == ClassificationResult.AUTHOR_MANIPULATION:
+            required_ai_strength = getattr(config, 'AI_OVERRIDE_AUTHOR_MANIP_THRESHOLD', 0.80)
+            required_db_weakness = 0.5
+            max_upgrade = ClassificationResult.SUSPICIOUS  # Conservative upgrade
+        else:  # SUSPICIOUS
+            required_ai_strength = getattr(config, 'AI_OVERRIDE_SUSPICIOUS_THRESHOLD', 0.70)
+            required_db_weakness = 0.6
+            max_upgrade = ClassificationResult.AUTHENTIC
+        
+        # Enhanced safety checks for AI override - MORE RESTRICTIVE
+        safety_passed = True
+        safety_reasons = []
+        
+        # Check 1: Database evidence must be weak enough to question
+        if db_evidence > required_db_weakness:
+            safety_passed = False
+            safety_reasons.append(f"Database evidence too strong ({db_evidence:.2f}) to override with AI")
+        
+        # Check 2: AI must have very strong positive indicators for high-confidence claims
+        min_indicators_high = getattr(config, 'AI_MIN_POSITIVE_INDICATORS_HIGH_CONF', 3)
+        min_indicators_med = getattr(config, 'AI_MIN_POSITIVE_INDICATORS_MED_CONF', 2)
+        
+        if ai_verification.confidence > 0.8:
+            if len(ai_verification.positive_indicators) < min_indicators_high:
+                safety_passed = False
+                safety_reasons.append(f"AI high confidence requires at least {min_indicators_high} positive indicators")
+        elif ai_verification.confidence > 0.7:
+            if len(ai_verification.positive_indicators) < min_indicators_med:
+                safety_passed = False
+                safety_reasons.append(f"AI moderate confidence requires at least {min_indicators_med} positive indicators")
+        
+        # Check 3: AI should have NO significant red flags for authentic claims
+        if len(ai_verification.red_flags) >= 1:  # Changed from 2 to 1 - stricter
+            safety_passed = False
+            safety_reasons.append("AI cannot claim authentic while having any red flags")
+        
+        # Check 4: Database similarity threshold - very conservative
+        if db_confidence < 0.2 and ai_evidence < 0.9:  # Increased AI requirement
+            safety_passed = False
+            safety_reasons.append("Extremely low database match requires near-perfect AI evidence (>0.9)")
+        elif db_confidence < 0.5 and ai_evidence < 0.85:
+            safety_passed = False
+            safety_reasons.append("Low database match requires very strong AI evidence (>0.85)")
+        
+        # Check 5: AI reasoning quality assessment
+        if ai_verification.reasoning and len(ai_verification.reasoning) < 50:
+            safety_passed = False
+            safety_reasons.append("AI reasoning too brief for override decision")
+        
+        # Check 6: Confidence gap requirement - AI must be significantly more confident
+        min_confidence_gap = getattr(config, 'AI_MIN_CONFIDENCE_GAP', 0.3)
+        confidence_gap = ai_verification.confidence - db_confidence
+        if confidence_gap < min_confidence_gap:
+            safety_passed = False
+            safety_reasons.append(f"AI confidence gap insufficient ({confidence_gap:.2f} < {min_confidence_gap})")
+        
+        # Make decision based on evidence strength and safety checks
+        if ai_evidence >= required_ai_strength and safety_passed:
+            # AI override approved - but with conservative weighting
+            new_classification = max_upgrade
+            
+            # More conservative AI weight calculation
+            base_ai_weight = min(0.4, ai_evidence * 0.6)  # Reduced maximum AI influence
+            database_penalty = 0.8 if db_evidence > 0.3 else 0.7  # Penalize when database has evidence
+            
+            new_confidence = (1 - base_ai_weight) * db_confidence * database_penalty + base_ai_weight * ai_verification.confidence
+            new_reasons = reasons + [f"Exceptional AI evidence overrides weak database concerns: {ai_verification.reasoning[:60]}..."]
+            new_reasons.append(f"AI confidence: {ai_verification.confidence:.2f}, Database confidence: {db_confidence:.2f}")
+            
+            if ai_verification.positive_indicators:
+                new_reasons.append(f"AI positive indicators: {', '.join(ai_verification.positive_indicators[:3])}")
+        else:
+            # AI override rejected - trust database evidence
+            new_classification = db_classification
+            
+            # Reduce confidence slightly due to AI disagreement, but trust database more
+            if safety_passed:
+                # Safety passed but evidence insufficient
+                new_confidence = db_confidence * 0.9
+                new_reasons = reasons + ["AI suggests authenticity but evidence insufficient for override"]
+                new_reasons.append("Database evidence takes precedence")
+            else:
+                # Safety failed - more significant confidence reduction
+                new_confidence = db_confidence * 0.85
+                new_reasons = reasons + ["AI suggestion rejected due to safety concerns"]
+                new_reasons.extend(safety_reasons[:2])  # Include first 2 safety reasons
+        
+        return new_classification, new_confidence, new_reasons
+    
+    def _handle_db_authentic_ai_problematic(self, db_classification, db_confidence, reasons, ai_verification, db_evidence, ai_evidence):
+        """
+        Handle case where database says authentic but AI says problematic
+        ENHANCED AI FRAUD DETECTION: Take AI concerns more seriously when database evidence is weak
+        """
+        
+        # AI fraud detection sensitivity from config
+        fraud_sensitivity = getattr(config, 'AI_FRAUD_DETECTION_SENSITIVITY', 0.75)
+        
+        # More nuanced approach based on database evidence strength
+        if db_evidence < 0.5:  # Weak database evidence - trust AI fraud detection more
+            if ai_evidence > fraud_sensitivity * 0.8 and len(ai_verification.red_flags) >= 2:
+                # Strong AI concerns with weak database evidence
+                new_classification = ai_verification.red_flags[0].lower()
+                if 'author' in new_classification:
+                    new_classification = ClassificationResult.AUTHOR_MANIPULATION
+                elif 'fabricat' in new_classification or 'fake' in new_classification:
+                    new_classification = ClassificationResult.FABRICATED
+                else:
+                    new_classification = ClassificationResult.SUSPICIOUS
+                
+                new_confidence = 0.6 + (ai_evidence - fraud_sensitivity) * 0.5
+                new_reasons = reasons + [f"Weak database evidence ({db_evidence:.2f}) + strong AI concerns"]
+                new_reasons.append(f"AI identifies: {', '.join(ai_verification.red_flags[:2])}")
+                new_reasons.append("Requires immediate manual investigation")
+                
+            elif ai_evidence > fraud_sensitivity * 0.9 and len(ai_verification.red_flags) >= 1:
+                # Moderate AI concerns with weak database evidence
+                new_classification = ClassificationResult.SUSPICIOUS
+                new_confidence = db_confidence * 0.7
+                new_reasons = reasons + [f"Weak database match + AI concerns warrant investigation"]
+                new_reasons.append(f"AI flag: {ai_verification.red_flags[0]}")
+            else:
+                # Weak AI concerns with weak database evidence - stay suspicious
+                new_classification = ClassificationResult.SUSPICIOUS
+                new_confidence = db_confidence * 0.8
+                new_reasons = reasons + ["Both database and AI evidence are weak - requires manual verification"]
+                
+        elif db_evidence >= 0.8:  # Strong database evidence - be more skeptical of AI concerns
+            if ai_evidence > fraud_sensitivity * 1.1 and len(ai_verification.red_flags) >= 3:
+                # Very strong AI concerns even with strong database evidence
+                new_classification = ClassificationResult.SUSPICIOUS
+                new_confidence = db_confidence * 0.75
+                new_reasons = reasons + [f"Strong database evidence but serious AI concerns"]
+                new_reasons.append(f"AI raises multiple red flags: {', '.join(ai_verification.red_flags[:2])}")
+                new_reasons.append("Exceptional case requiring expert review")
+            elif ai_evidence > fraud_sensitivity and len(ai_verification.red_flags) >= 2:
+                # Moderate AI concerns with strong database evidence
+                new_classification = ClassificationResult.SUSPICIOUS
+                new_confidence = db_confidence * 0.85
+                new_reasons = reasons + [f"Strong database match but AI identifies potential issues"]
+                new_reasons.append(f"AI concerns: {', '.join(ai_verification.red_flags[:2])}")
+            else:
+                # Weak AI concerns with strong database evidence - trust database
+                new_classification = db_classification
+                new_confidence = db_confidence * 0.95
+                new_reasons = reasons + ["Strong database evidence overrides minor AI concerns"]
+                if ai_verification.red_flags:
+                    new_reasons.append(f"AI notes: {ai_verification.red_flags[0]}")
+                    
+        else:  # Moderate database evidence (0.5-0.8) - balanced approach
+            if ai_evidence > fraud_sensitivity and len(ai_verification.red_flags) >= 2:
+                # Strong AI concerns with moderate database evidence
+                new_classification = ClassificationResult.SUSPICIOUS
+                new_confidence = db_confidence * 0.75
+                new_reasons = reasons + [f"Moderate database evidence + AI fraud detection"]
+                new_reasons.append(f"AI identifies: {', '.join(ai_verification.red_flags[:2])}")
+                new_reasons.append("Balanced evidence suggests manual review needed")
+            elif ai_evidence > fraud_sensitivity * 0.8 and len(ai_verification.red_flags) >= 1:
+                # Moderate AI concerns
+                new_classification = ClassificationResult.SUSPICIOUS
+                new_confidence = db_confidence * 0.85
+                new_reasons = reasons + [f"AI identifies potential issue: {ai_verification.red_flags[0]}"]
+                new_reasons.append("Moderate confidence in both sources - verification recommended")
+            else:
+                # Weak AI concerns - slight downgrade but trust database more
+                new_classification = db_classification
+                new_confidence = db_confidence * 0.9
+                new_reasons = reasons + ["Database evidence stronger than AI concerns"]
+        
+        return new_classification, new_confidence, new_reasons
