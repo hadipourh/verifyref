@@ -19,6 +19,9 @@ Eli Biham, Adi Shamir. Differential Cryptanalysis of DES-like Cryptosystems. Jou
 # AES cryptanalysis - should be AUTHENTIC
 Lars Knudsen, David Wagner. Integral Cryptanalysis. In Fast Software Encryption, pages 112-127. Springer, 2002.
 
+# Paper with DOI for testing false negative reduction - should be AUTHENTIC
+David Wagner. The Boomerang Attack. In Fast Software Encryption, pages 156-170. Springer, 1999. DOI: 10.1007/3-540-48519-8_12
+
 ## SUSPICIOUS/PROBLEMATIC REFERENCES (should NOT classify as AUTHENTIC)
 
 # Author name corruption - should be SUSPICIOUS (actual authors: Orr Dunkelman, Nathan Keller, Adi Shamir)
@@ -29,6 +32,9 @@ Catching the boomerangs: a new method to improve finding boomerang attacks. In C
 
 # Fabricated reference #2 - should be SUSPICIOUS/FABRICATED  
 John Smith, Alice Johnson. Advanced Quantum Cryptanalysis of Classical Ciphers. In Proceedings of the International Conference on Impossible Mathematics, pages 45-67. MIT Press, 2019.
+
+# Fabricated reference with fake DOI - should be SUSPICIOUS/FABRICATED
+Jane Doe, Bob Smith. Revolutionary Cryptographic Breakthrough. In Journal of Advanced Cryptography, volume 12, pages 1-15, 2020. DOI: 10.1234/fake.journal.2020.001
 
 # Non-existent venue - should be SUSPICIOUS/FABRICATED
 Bob Wilson, Carol Davis. Revolutionary Breakthrough in Zero-Knowledge Proofs. In Journal of Theoretical Computer Magic, volume 15, pages 123-145, 2020.

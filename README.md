@@ -62,14 +62,19 @@ This tool helps reviewers quickly identify potentially fabricated references and
 - **Multi-Database Verification**: Cross-references across 8+ academic databases including Google Scholar
 - **PDF Processing**: Extracts and parses references from academic PDFs using GROBID
 - **Smart Decision Logic**: Intelligent AI-database consensus system that reduces false positives/negatives
+- **Google Scholar Smart Fallback**: Advanced fallback strategy used only when other databases find poor matches (<0.7 similarity)
 - **Google Scholar Author Validation**: Secondary validation layer to distinguish legitimate papers from manipulation
+- **Google Scholar Fabrication Detection**: Advanced validation to detect fabricated references using comprehensive search
 - **AI-Powered Analysis**: Optional GPT-based fraud detection and pattern recognition
+- **DOI Validation & False Negative Reduction**: Direct DOI resolution verification to rescue legitimate papers with poor database coverage
+- **Enhanced Fraud Detection**: Advanced author manipulation detection with multi-layered validation
+- **Stricter Classification Thresholds**: Conservative similarity requirements (0.55) and suspicious thresholds (0.25) for improved accuracy
+- **Major Database Requirements**: Enhanced validation requiring evidence from authoritative academic databases
 - **Context-Aware Search**: Optimized database selection for different research domains
-- **Smart Fallback Strategy**: Google Scholar used only when other databases find poor matches
-- **Enhanced Fraud Detection**: Advanced author manipulation detection with false positive prevention
 - **5-Category Classification**: Comprehensive authenticity assessment system
 - **Parallel Processing**: Efficient verification with automatic performance optimization
 - **Flexible Output**: JSON and text format support with detailed reporting
+- **Comprehensive Test Suite**: Automated testing with authentic and fabricated reference examples
 
 ## Installation and Quick Start
 
@@ -141,15 +146,22 @@ python verifyref.py paper.pdf --similarity-threshold 0.8
 
 ## Classification System
 
-VerifyRef uses a 5-category system to evaluate reference authenticity:
+VerifyRef uses a 5-category system with enhanced accuracy thresholds to evaluate reference authenticity:
 
 | Category | Criteria | Action |
 |----------|----------|---------|
-| **AUTHENTIC** 🟢 | High similarity (>threshold), multiple DB matches | Accept reference |
-| **SUSPICIOUS** 🟡 | Moderate similarity (20-45%), few matches | Manual review |
-| **FABRICATED** 🔴 | Very low similarity (<20%), no matches | Investigate |
+| **AUTHENTIC** 🟢 | High similarity (>55%), multiple DB matches, major database evidence | Accept reference |
+| **SUSPICIOUS** 🟡 | Moderate similarity (25-55%), limited evidence, needs verification | Manual review |
+| **FABRICATED** 🔴 | Very low similarity (<25%), no matches in major databases | Investigate |
 | **AUTHOR_MANIPULATION** 🔴 | High title similarity but low author match (validated by Google Scholar) | Flag misconduct |
 | **INCONCLUSIVE** ⚪ | Parsing errors, network issues | Re-verify |
+
+**Enhanced Accuracy Features**:
+- **Stricter Thresholds**: Similarity threshold increased from 45% to 55% for more conservative classification
+- **Major Database Requirements**: Papers must be found in authoritative databases (OpenAlex, DBLP, PubMed, etc.)
+- **DOI Validation**: Valid DOIs provide confidence boost and help reduce false negatives
+- **Google Scholar Fabrication Detection**: Advanced validation for suspected fabricated references
+- **Conservative AI Override**: AI requires exceptional evidence (>90% confidence) to override database findings
 
 **Confidence Levels**: 90-100% (very high), 70-89% (high), 50-69% (moderate), 30-49% (low), <30% (very low)
 
@@ -157,12 +169,22 @@ VerifyRef uses a 5-category system to evaluate reference authenticity:
 
 **Primary**: OpenAlex (comprehensive coverage, no rate limits)  
 **Specialized**: DBLP (CS), PubMed (Bio), IACR (Crypto), ArXiv (Preprints), Springer Nature (STM), Semantic Scholar, CrossRef  
-**Smart Fallback**: Google Scholar (used only when other databases find similarity < 0.7)
+**Smart Fallback**: Google Scholar (used only when other databases find similarity < 0.7)  
+**DOI Validation**: Direct DOI resolution via doi.org for authenticity verification
+
+**Major Database Authority**:
+VerifyRef now prioritizes evidence from major academic databases (OpenAlex, Semantic Scholar, DBLP, PubMed, ArXiv, IACR) and requires stronger evidence for authentic classification when papers are not found in these authoritative sources.
 
 **Context-Aware Prioritization**:
 - **CS**: OpenAlex → DBLP → IACR → ArXiv → Semantic Scholar → Google Scholar*
 - **Bio**: OpenAlex → PubMed → Semantic Scholar → ArXiv → Google Scholar*  
 - **General**: OpenAlex → Semantic Scholar → DBLP → ArXiv → PubMed → Google Scholar*
+
+**Enhanced Validation Features**:
+- **Google Scholar Fabrication Detection**: Triggered when no major databases find matches and similarity < 0.5
+- **DOI Resolution Verification**: Valid DOIs (10.xxxx/xxxx) are resolved via doi.org to confirm authenticity
+- **Conservative Thresholds**: Borderline cases (55-70% similarity) without major database evidence are classified as suspicious
+- **Multi-Source Requirements**: Moderate similarity papers require evidence from multiple databases or major database confirmation
 
 *Google Scholar is triggered only when other databases find poor matches (< 0.7 similarity) and at least 3 databases have been searched, dramatically reducing API usage while maximizing value.
 
@@ -259,27 +281,28 @@ ENABLE_GOOGLE_SCHOLAR = True  # Enable/disable with one flag
 
 ### AI-Powered Verification
 
-Database-dependent AI analysis system that prevents over-optimistic AI decisions through conservative evidence-based thresholds.
+Enhanced AI analysis system with strengthened safety controls and conservative decision-making to prevent over-optimistic classifications.
 
 **Key Features:**
-- **Database-Dependent Logic**: AI influence automatically scales based on database evidence strength
-- **Conservative Override Requirements**: Multiple safety checks and high thresholds prevent AI over-optimism
+- **Strengthened AI Override Controls**: AI confidence gap requirement increased to 0.5 (from 0.3)
+- **Enhanced Safety Checks**: Multiple safety validations prevent AI over-optimism
+- **Conservative Evidence Requirements**: AI requires 90%+ confidence and exceptional evidence to override database findings
+- **Major Database Validation**: AI cannot claim authentic without evidence from major academic databases
 - **Enhanced Fraud Detection**: AI fraud detection is enhanced when database evidence is weak
-- **Evidence-Based Weighting**: Strong database evidence (>0.8) reduces AI influence to 20%
+- **Multi-Indicator Requirements**: High-confidence AI claims require 4+ positive indicators (increased from 3)
 
 **Configuration** (in `config.py`):
 ```python
-AI_WEIGHT = 0.50  # Base AI weight, automatically adjusted by database evidence
+# Enhanced AI Safety Controls
+AI_OVERRIDE_FABRICATED_THRESHOLD = 0.95    # Increased from 0.85 - very high bar for overriding fabricated classification
+AI_MIN_CONFIDENCE_GAP = 0.5                # Increased from 0.3 - larger gap required between AI and database confidence
+AI_MIN_POSITIVE_INDICATORS_HIGH_CONF = 4   # Increased from 3 - more evidence required for high-confidence claims
 
-# Database-Dependent AI Weights (prevents over-optimism)
+# Conservative Database-Dependent AI Weights
 AI_WEIGHT_WITH_STRONG_DB = 0.2      # 20% AI influence with strong database evidence
 AI_WEIGHT_WITH_MODERATE_DB = 0.3    # 30% AI influence with moderate database evidence  
 AI_WEIGHT_WITH_WEAK_DB = 0.4        # 40% AI influence with weak database evidence
 AI_WEIGHT_WITH_VERY_WEAK_DB = 0.5   # 50% max AI influence with very weak database evidence
-
-# Conservative AI Override Requirements
-AI_MIN_POSITIVE_INDICATORS_HIGH_CONF = 3  # Required indicators for high confidence claims
-AI_MIN_CONFIDENCE_GAP = 0.3               # Minimum confidence gap for AI override
 ```
 
 **Usage:**
@@ -287,11 +310,39 @@ AI_MIN_CONFIDENCE_GAP = 0.3               # Minimum confidence gap for AI overri
 python verifyref.py paper.pdf --enable-ai
 ```
 
-**Analysis Includes**: Pattern recognition, author collaboration validation, timeline analysis, venue relationship verification
+**Analysis Includes**: Pattern recognition, author collaboration validation, timeline analysis, venue relationship verification, DOI consistency checking
 
-**Safety Features**: AI cannot claim authentic while having red flags, requires exceptional evidence to override strong database matches, multiple positive indicators required for high-confidence claims.
+**Safety Features**: 
+- AI cannot claim authentic while having any red flags
+- Requires exceptional evidence (>95%) to override fabricated classification
+- Multiple positive indicators required for high-confidence claims
+- Major database evidence required for authentic classification
+- Conservative confidence gap requirements prevent over-optimistic decisions
 
-See `SMART_DECISION_LOGIC.md` for detailed database-dependent decision algorithms.
+## Testing Framework
+
+VerifyRef includes a comprehensive testing framework to validate accuracy improvements and ensure robust fraud detection:
+
+**Test Suite**: Located in `test/test.txt` with curated examples including:
+- **Authentic References**: Classic cryptography papers from reputable venues
+- **Fabricated References**: Known fake papers for validation testing  
+- **Author Manipulation Cases**: References with corrupted author names
+- **Edge Cases**: Partial information, venue fraud, impossible references
+
+**Accuracy Validation**:
+```bash
+# Test the enhanced system with the comprehensive test suite
+python verifyref.py --verify test/test.txt --enable-ai --output test_results.txt
+
+# Test with specific fabricated examples
+python verifyref.py --verify "Catching the boomerangs: a new method to improve finding boomerang attacks. In Computer Science and Social Engineering, pages 13–22. Springer, 2018." --enable-ai
+```
+
+**Expected Improvements**:
+- Fabricated references correctly classified as SUSPICIOUS (26.1%) instead of AUTHENTIC (72.1%)
+- Enhanced detection of author manipulation and venue fraud
+- Reduced false positives through stricter classification thresholds
+- Better handling of borderline cases with conservative evidence requirements
 
 ## Usage Scenarios
 

@@ -114,6 +114,17 @@ class ReferenceClassifier:
             except Exception as e:
                 logger.warning(f"Failed to initialize CryptoDB client: {e}")
         
+        # DOI validation for reducing false negatives
+        self.doi_client = None
+        try:
+            from .doi_validation_client import DOIValidationClient
+            self.doi_client = DOIValidationClient()
+            logger.info("DOI validation enabled for false negative reduction")
+        except ImportError:
+            logger.warning("DOI validation client not available")
+        except Exception as e:
+            logger.warning(f"Failed to initialize DOI validation client: {e}")
+        
         # Optional AI verification integration
         self.ai_verifier = None
         if enable_ai_verification:
@@ -786,6 +797,37 @@ class ReferenceClassifier:
                 reasons.append("Pattern suggests fabricated reference")
                 return ClassificationResult.FABRICATED, 0.75, reasons
         
+        # DOI VALIDATION FOR FALSE NEGATIVE REDUCTION
+        # If we have a DOI, validate it to potentially rescue low-scoring authentic papers
+        extracted_doi = extracted_ref.get('doi', '').strip()
+        doi_validation_result = None
+        if extracted_doi and self.doi_client:
+            doi_validation_result = self.doi_client.validate_doi(extracted_doi)
+            
+            if doi_validation_result.get('valid', False):
+                # Valid DOI found - this is strong evidence of authenticity
+                reasons.append(f"✅ DOI validation: {extracted_doi} resolves successfully")
+                reasons.append(f"DOI publisher: {doi_validation_result.get('publisher', 'Unknown')}")
+                
+                # If similarity is low but DOI is valid, upgrade to suspicious instead of fabricated
+                if similarity_score < 0.4:
+                    reasons.append("Low database similarity but valid DOI suggests authentic paper with indexing gaps")
+                    return ClassificationResult.SUSPICIOUS, max(0.6, similarity_score + 0.3), reasons
+                
+                # If moderate similarity with valid DOI, boost confidence significantly
+                elif similarity_score < self.similarity_threshold:
+                    confidence_boost = 0.15  # Significant boost for valid DOI
+                    boosted_score = min(0.95, similarity_score + confidence_boost)
+                    reasons.append(f"Valid DOI boosts confidence significantly (+{confidence_boost})")
+                    
+                    # If boosted score now exceeds threshold, classify as authentic
+                    if boosted_score >= self.similarity_threshold:
+                        return ClassificationResult.AUTHENTIC, boosted_score, reasons + ["DOI validation rescued potentially missed authentic paper"]
+            else:
+                # Invalid or non-resolving DOI - suspicious
+                reasons.append(f"⚠️  DOI validation failed: {extracted_doi} - {doi_validation_result.get('error', 'Unknown error')}")
+                # Don't immediately classify as fake - could be temporary resolution issue
+        
         # Authentic classification using configurable threshold
         if similarity_score >= self.similarity_threshold:
             confidence = min(0.95, similarity_score + self.authentic_confidence_boost)
@@ -826,6 +868,11 @@ class ReferenceClassifier:
                     reasons.append("Paper has DOI")
                     confidence += 0.02
             
+            # Additional DOI validation boost for authentic papers
+            if doi_validation_result and doi_validation_result.get('valid', False):
+                confidence += 0.05  # Extra confidence for validated DOI
+                reasons.append("DOI resolution confirmed - enhances authenticity confidence")
+            
             return ClassificationResult.AUTHENTIC, min(0.99, confidence), reasons
         
         # Medium similarity - use configurable suspicious threshold
@@ -840,13 +887,30 @@ class ReferenceClassifier:
             else:
                 reasons.append("Limited database coverage raises some concerns")
                 confidence -= self.single_database_penalty
+            
+            # DOI validation can rescue suspicious papers
+            if doi_validation_result and doi_validation_result.get('valid', False):
+                confidence += 0.10  # Significant boost for validated DOI in suspicious cases
+                reasons.append("Valid DOI provides additional authenticity evidence")
+                
+                # If DOI validation brings confidence high enough, upgrade to authentic
+                if confidence >= 0.75:
+                    return ClassificationResult.AUTHENTIC, min(0.99, confidence + 0.1), reasons + ["DOI validation upgraded suspicious paper to authentic"]
                 
             return ClassificationResult.SUSPICIOUS, confidence, reasons
         
-        # Low similarity - likely fabricated or fake
+        # Low similarity - likely fabricated or fake (but check DOI first)
         elif similarity_score > self.inconclusive_threshold:
             confidence = 0.7 + self.fraud_confidence_boost
             reasons.append(f"Low similarity score ({similarity_score:.2f})")
+            
+            # DOI validation can rescue low-similarity legitimate papers
+            if doi_validation_result and doi_validation_result.get('valid', False):
+                reasons.append("⚠️  Low database similarity but valid DOI suggests indexing gaps or new publication")
+                reasons.append(f"DOI {extracted_doi} resolves to {doi_validation_result.get('publisher', 'Unknown Publisher')}")
+                
+                # Upgrade to suspicious instead of fabricated
+                return ClassificationResult.SUSPICIOUS, max(0.5, similarity_score + 0.2), reasons + ["Valid DOI prevents fabrication classification"]
             
             # Check if this appears to be completely made up
             if similarity_score < 0.1:
