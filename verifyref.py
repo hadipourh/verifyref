@@ -204,7 +204,10 @@ def verify_references(input_path: str, output_file: str = None, output_format: s
     grobid_client = GrobidClient()
     parser = ReferenceParser()
     verifier = MultiDatabaseVerifier(fast_mode=True)  # Enable fast mode for better performance
-    classifier = ReferenceClassifier()
+    
+    # Initialize classifier with Google Scholar client for enhanced validation
+    google_scholar_client = verifier.clients.get('google_scholar')
+    classifier = ReferenceClassifier(google_scholar_client=google_scholar_client)
     
     # Detect input type and extract/parse references accordingly
     input_type = detect_input_type(input_path)

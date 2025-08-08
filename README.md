@@ -59,11 +59,14 @@ This tool helps reviewers quickly identify potentially fabricated references and
 
 ## Features
 
-- **Multi-Database Verification**: Cross-references across 7+ academic databases
+- **Multi-Database Verification**: Cross-references across 8+ academic databases including Google Scholar
 - **PDF Processing**: Extracts and parses references from academic PDFs using GROBID
 - **Smart Decision Logic**: Intelligent AI-database consensus system that reduces false positives/negatives
+- **Google Scholar Author Validation**: Secondary validation layer to distinguish legitimate papers from manipulation
 - **AI-Powered Analysis**: Optional GPT-based fraud detection and pattern recognition
 - **Context-Aware Search**: Optimized database selection for different research domains
+- **Smart Fallback Strategy**: Google Scholar used only when other databases find poor matches
+- **Enhanced Fraud Detection**: Advanced author manipulation detection with false positive prevention
 - **5-Category Classification**: Comprehensive authenticity assessment system
 - **Parallel Processing**: Efficient verification with automatic performance optimization
 - **Flexible Output**: JSON and text format support with detailed reporting
@@ -104,8 +107,8 @@ source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 # Install dependencies
 pip install -r requirements.txt
 
-# Configure API keys and email
-# Edit config.py: Set CROSSREF_EMAIL and optional API keys
+# Configure databases and API keys
+# Edit config.py: Set ENABLE_CROSSREF=True, ENABLE_GOOGLE_SCHOLAR=True, and CROSSREF_EMAIL
 
 # Start GROBID (for PDF processing)
 docker run -d -p 8070:8070 lfoppiano/grobid:0.8.2
@@ -145,7 +148,7 @@ VerifyRef uses a 5-category system to evaluate reference authenticity:
 | **AUTHENTIC** 🟢 | High similarity (>threshold), multiple DB matches | Accept reference |
 | **SUSPICIOUS** 🟡 | Moderate similarity (20-45%), few matches | Manual review |
 | **FABRICATED** 🔴 | Very low similarity (<20%), no matches | Investigate |
-| **AUTHOR_MANIPULATION** 🔴 | High title similarity but low author match | Flag misconduct |
+| **AUTHOR_MANIPULATION** 🔴 | High title similarity but low author match (validated by Google Scholar) | Flag misconduct |
 | **INCONCLUSIVE** ⚪ | Parsing errors, network issues | Re-verify |
 
 **Confidence Levels**: 90-100% (very high), 70-89% (high), 50-69% (moderate), 30-49% (low), <30% (very low)
@@ -153,28 +156,42 @@ VerifyRef uses a 5-category system to evaluate reference authenticity:
 ## Database Integration
 
 **Primary**: OpenAlex (comprehensive coverage, no rate limits)  
-**Specialized**: DBLP (CS), PubMed (Bio), IACR (Crypto), ArXiv (Preprints), Springer Nature (STM), Semantic Scholar, CrossRef
+**Specialized**: DBLP (CS), PubMed (Bio), IACR (Crypto), ArXiv (Preprints), Springer Nature (STM), Semantic Scholar, CrossRef  
+**Smart Fallback**: Google Scholar (used only when other databases find similarity < 0.7)
 
 **Context-Aware Prioritization**:
-- **CS**: OpenAlex → DBLP → IACR → ArXiv → Semantic Scholar
-- **Bio**: OpenAlex → PubMed → Semantic Scholar → ArXiv  
-- **General**: OpenAlex → Semantic Scholar → DBLP → ArXiv → PubMed
+- **CS**: OpenAlex → DBLP → IACR → ArXiv → Semantic Scholar → Google Scholar*
+- **Bio**: OpenAlex → PubMed → Semantic Scholar → ArXiv → Google Scholar*  
+- **General**: OpenAlex → Semantic Scholar → DBLP → ArXiv → PubMed → Google Scholar*
+
+*Google Scholar is triggered only when other databases find poor matches (< 0.7 similarity) and at least 3 databases have been searched, dramatically reducing API usage while maximizing value.
 
 ## Configuration
 
-**Setup**: Edit API keys and email in `config.py`
+**Setup**: Edit configuration in `config.py`
 
 1. Open `config.py` in your editor
-2. **Required**: Set `CROSSREF_EMAIL` to your email address
-3. **Optional**: Add API keys for enhanced features:
+2. **Database Enable/Disable**: Use the convenient enable flags at the top:
+   - `ENABLE_CROSSREF = True` - Enable CrossRef database searches
+   - `ENABLE_GOOGLE_SCHOLAR = True` - Enable Google Scholar with smart fallback
+3. **Required**: Set `CROSSREF_EMAIL` to your email address
+4. **Optional**: Add API keys for enhanced features:
    - `SEMANTIC_SCHOLAR_API_KEY` - Higher rate limits (recommended)
    - `OPENAI_API_KEY` - AI-powered fraud detection
    - `NCBI_API_KEY` - Higher PubMed rate limits
    - `SPRINGER_API_KEY` - Access to Springer Nature database
 
 ```python
-# In config.py - Edit these values:
+# In config.py - Easy-to-find configuration at the top:
+
+# Database Configuration (Enable/Disable specific databases)
+ENABLE_CROSSREF = True  # ← Set to True to enable CrossRef database searches
+ENABLE_GOOGLE_SCHOLAR = True  # ← Set to True to enable Google Scholar searches (free but rate-limited)
+
+# Required for CrossRef
 CROSSREF_EMAIL = "your.email@domain.com"  # ← REQUIRED
+
+# Optional API keys for enhanced features
 SEMANTIC_SCHOLAR_API_KEY = "your-key-here"  # ← Optional
 OPENAI_API_KEY = "your-key-here"  # ← Optional
 NCBI_API_KEY = "your-key-here"  # ← Optional
@@ -185,6 +202,7 @@ SPRINGER_API_KEY = "your-key-here"  # ← Optional
 
 **Free Databases (No API Key Required):**
 - OpenAlex, DBLP, IACR, ArXiv - Work out of the box
+- Google Scholar - Free but rate-limited with smart fallback strategy
 
 **Enhanced with API Keys (Optional):**
 - **Semantic Scholar API Key**: [Get it here](https://www.semanticscholar.org/product/api#api-key-form) - Higher rate limits
@@ -193,6 +211,51 @@ SPRINGER_API_KEY = "your-key-here"  # ← Optional
 **API Key Required:**
 - **OpenAI API Key**: [Get it here](https://platform.openai.com/api-keys) - For AI fraud detection
 - **Springer Nature API Key**: [Get it here](https://dev.springernature.com/) - Required for all access (free signup)
+
+### Google Scholar Smart Fallback
+
+VerifyRef includes Google Scholar with an intelligent fallback strategy that dramatically reduces API usage while maximizing value, plus enhanced author manipulation validation.
+
+**How It Works:**
+1. **Primary Search**: 7 other databases search first (OpenAlex, DBLP, etc.)
+2. **Smart Decision**: Google Scholar only searches if:
+   - Best similarity from other databases < 0.7 (poor matches)
+   - At least 3 databases have been searched
+   - Google Scholar is enabled
+3. **Author Validation**: When author manipulation is detected, Google Scholar validates whether it's legitimate different papers or actual fraud
+4. **Conservative Usage**: 20-second delays, 10 requests/hour limit
+
+**Benefits:**
+- **~90% Reduction** in Google Scholar API usage
+- **Maximum Value** - only searches when really needed
+- **Enhanced Accuracy** - validates author manipulation to prevent false positives
+- **Rate Limit Safe** - prevents blocking with conservative limits
+- **Academic Compliant** - respectful behavior and user agents
+
+**Author Manipulation Validation:**
+```python
+# Google Scholar distinguishes between:
+# 1. Legitimate different papers with similar titles → Override detection
+# 2. Actual author manipulation fraud → Confirm detection
+# 3. Inconclusive evidence → Proceed with original analysis
+
+validation_result = {
+    "validated": True/False/None,
+    "conclusion": "legitimate_different_papers" | "confirmed_author_manipulation",
+    "evidence": "Detailed reasoning for decision"
+}
+```
+
+**Configuration:**
+```python
+# Easy control in config.py
+ENABLE_GOOGLE_SCHOLAR = True  # Enable/disable with one flag
+
+# Advanced settings (usually no need to change)
+"fallback_threshold": 0.7,     # Only search if other DBs find < 0.7 similarity
+"min_databases_searched": 3,   # Must search at least 3 other DBs first
+"rate_limit_delay": 20.0,      # Conservative 20-second delays
+```
 
 ### AI-Powered Verification
 

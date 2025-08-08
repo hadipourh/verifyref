@@ -183,9 +183,9 @@ The utility modules provide specialized functionality for different aspects of t
 
 ### 5. Multi-Database Verification (`verifier/multi_database_verifier.py`)
 
-**Location**: `/verifier/multi_database_verifier.py` (361 lines)
+**Location**: `/verifier/multi_database_verifier.py` (enhanced with Google Scholar integration)
 
-**Database Architecture**:
+**8-Database Architecture**:
 ```python
 self.clients = {
     "openalex": OpenAlexClient(),           # Primary - fast, comprehensive, free
@@ -331,7 +331,7 @@ BIOMEDICAL_KEYWORDS = frozenset([
 
 ### 1. Advanced Fraud Detection
 
-**Author Manipulation Detection**:
+**Author Manipulation Detection with Google Scholar Validation**:
 ```python
 def _detect_fraud(self, extracted_ref: Dict[str, Any], search_results: List[Dict[str, Any]]) -> Optional[VerificationResult]:
     for paper in search_results:
@@ -340,17 +340,56 @@ def _detect_fraud(self, extracted_ref: Dict[str, Any], search_results: List[Dict
         
         # High title similarity + low author similarity = potential fraud
         if title_sim > self.author_manipulation_threshold and author_sim < 0.3:
+            
+            # NEW: Google Scholar secondary validation for author manipulation
+            if self.google_scholar_client and self.google_scholar_client.should_validate_author_manipulation('author_manipulation'):
+                validation_result = self.google_scholar_client.validate_author_manipulation(
+                    extracted_ref.get('title', ''),
+                    extracted_ref.get('authors', []),
+                    paper.get('title', ''),
+                    paper.get('authors', [])
+                )
+                
+                if validation_result.get('validated') == False:
+                    # Google Scholar found legitimate different papers - override detection
+                    continue  # Skip fraud classification
+                elif validation_result.get('validated') == True:
+                    # Google Scholar confirms manipulation - enhance evidence
+                    evidence.update({'google_scholar_validation': validation_result})
+            
             return VerificationResult(
                 classification=ClassificationResult.AUTHOR_MANIPULATION,
                 confidence=confidence,
-                # ... additional details
+                # ... additional details including Google Scholar evidence
             )
+```
+
+**Google Scholar Validation Logic**:
+The system now uses Google Scholar as a secondary validation layer to distinguish between:
+- **Legitimate different papers**: Multiple papers with similar titles but different authors (NOT manipulation)
+- **Actual author manipulation**: Deliberate author swapping fraud (IS manipulation)
+
+**Validation Decision Matrix**:
+```python
+def _analyze_author_manipulation_evidence(self, found_papers: List[GoogleScholarResult]) -> Dict[str, Any]:
+    if len(exact_matches) >= 2:
+        if found_original_authors and found_suspected_authors:
+            return {"validated": False, "conclusion": "legitimate_different_papers"}
+        elif found_suspected_authors and not found_original_authors:
+            return {"validated": True, "conclusion": "confirmed_author_manipulation"}
+    
+    elif len(exact_matches) == 1:
+        if author_match_suspected > 0.7:
+            return {"validated": True, "conclusion": "confirmed_author_manipulation"}
+    
+    return {"validated": None, "conclusion": "inconclusive"}
 ```
 
 **False Positive Prevention**:
 - Skip single author papers (name variations common)
 - Require multiple database presence for high confidence
 - Consider established papers (3+ database sources) as legitimate
+- **NEW**: Google Scholar validation prevents false positives when legitimate different papers exist
 
 ### 2. CryptoDB Integration
 **Special verification for cryptography papers**:
@@ -433,6 +472,8 @@ class DatabaseClient:
     def search_paper(self, title, authors, year, venue, doi, limit) -> List[Dict]
 ```
 
+**Total Supported Databases**: 8 academic databases with specialized features
+
 ### 2. Database-Specific Features
 
 **OpenAlex** (`verifier/openalex_client.py`):
@@ -455,13 +496,115 @@ class DatabaseClient:
 - XML API parsing
 - Category-based filtering
 
-### 3. Context-Aware Database Selection
+**CrossRef** (`verifier/crossref_client.py`):
+- DOI-based paper identification
+- Comprehensive metadata
+- Email-based polite access
+
+**Google Scholar** (`verifier/google_scholar_client.py`):
+- **Smart Fallback Strategy**: Only searches when other databases find similarity < 0.7
+- **Author Manipulation Validation**: Secondary validation layer for fraud detection accuracy
+- **Anti-Bot Protection**: Rate limiting, user agent rotation, session management
+- **Conservative Usage**: 20-second delays, 10 requests/hour, 50/day limits
+- **Academic Compliance**: Institutional proxy support, respectful behavior
+
+**NEW: Author Manipulation Validation Features**:
+```python
+def validate_author_manipulation(self, title, authors, suspected_title, suspected_authors) -> Dict:
+    # Search for exact title matches on Google Scholar
+    # Analyze evidence to distinguish between:
+    # 1. Legitimate different papers with similar titles
+    # 2. Actual author manipulation fraud
+    return {
+        "validated": True/False/None,  # Clear validation decision
+        "conclusion": "legitimate_different_papers" | "confirmed_author_manipulation" | "inconclusive",
+        "evidence": "Detailed explanation of decision",
+        "confidence": 0.0-1.0
+    }
+```
+
+**Semantic Scholar** (`verifier/semantic_scholar.py`):
+- AI-enhanced paper metadata
+- Citation analysis
+- Optional API key for higher limits
+
+**IACR ePrint** (`verifier/iacr_client.py`):
+- Cryptography specialty
+- RSS feed integration
+- Domain-specific optimization
+
+### 3. Smart Fallback Strategy (Google Scholar)
+
+**Intelligent Usage Decision**:
+```python
+def should_search_google_scholar(best_similarity: float, databases_searched: List[str]) -> bool:
+    # Only search if:
+    # 1. Enabled and fallback_only=True
+    # 2. At least 3 databases searched
+    # 3. Best similarity < 0.7 threshold
+    return (
+        self.config.get('enabled', False) and
+        len(databases_searched) >= 3 and
+        best_similarity < 0.7
+    )
+```
+
+**Benefits**:
+- Reduces Google Scholar API usage by ~90%
+- Maximizes value by using only when needed
+- Prevents rate limiting and blocking
+- Maintains comprehensive coverage
+
+### 4. Google Scholar Author Manipulation Validation
+
+**Secondary Validation Layer**:
+Google Scholar serves as the "ultimate authority" for validating author manipulation detection, helping to distinguish between legitimate different papers and actual fraud.
+
+**Validation Workflow**:
+```python
+def validate_author_manipulation(self, title, authors, suspected_title, suspected_authors):
+    # 1. Search Google Scholar for exact title matches
+    exact_title_query = f'"{title}"'
+    search_results = scholarly.search_pubs(exact_title_query)
+    
+    # 2. Analyze found papers for evidence
+    evidence = self._analyze_author_manipulation_evidence(
+        title, authors, suspected_title, suspected_authors, found_papers
+    )
+    
+    # 3. Make validation decision based on evidence
+    return validation_decision
+```
+
+**Decision Logic**:
+- **Multiple Papers Found**: If Google Scholar finds multiple legitimate papers with similar titles → Override manipulation detection
+- **Single Paper Confirmed**: If Google Scholar confirms only one legitimate paper with correct authors → Confirm manipulation detection  
+- **Inconclusive Evidence**: If evidence is mixed → Proceed with original detection but add uncertainty note
+
+**Integration with Classification**:
+```python
+# In fraud detection logic
+if self.google_scholar_client and should_validate:
+    validation_result = self.google_scholar_client.validate_author_manipulation(...)
+    
+    if validation_result.get('validated') == False:
+        continue  # Skip fraud detection - legitimate different papers
+    elif validation_result.get('validated') == True:
+        evidence.update({'google_scholar_validation': validation_result})  # Enhance evidence
+```
+
+**Impact on Accuracy**:
+- **Reduces False Positives**: Prevents flagging legitimate different papers as manipulation
+- **Confirms True Positives**: Validates actual author manipulation with authoritative evidence
+- **Evidence-Based Decisions**: Provides detailed reasoning for all validation outcomes
+
+### 5. Context-Aware Database Selection
 
 **Computer Science Papers**:
 ```python
 CS_RESULT_LIMITS = {
     "dblp": 15, "iacr": 12, "arxiv": 12, 
-    "semantic_scholar": 8, "crossref": 8, "pubmed": 3
+    "semantic_scholar": 8, "crossref": 8, "pubmed": 3, "google_scholar": 3
 }
 ```
 
@@ -485,6 +628,22 @@ BIO_RESULT_LIMITS = {
 3. Environment variables
 4. Command-line arguments (highest priority)
 
+**User-Friendly Enable Flags** (at top of config.py):
+```python
+# Easy database enable/disable controls
+ENABLE_CROSSREF = True          # Enable CrossRef database searches
+ENABLE_GOOGLE_SCHOLAR = True    # Enable Google Scholar with smart fallback
+
+# Required for CrossRef
+CROSSREF_EMAIL = "your.email@domain.com"
+
+# Optional API keys for enhanced features
+SEMANTIC_SCHOLAR_API_KEY = ""
+OPENAI_API_KEY = ""
+NCBI_API_KEY = ""
+SPRINGER_API_KEY = ""
+```
+
 **Key Configuration Categories**:
 ```python
 GROBID_CONFIG = {
@@ -495,9 +654,20 @@ GROBID_CONFIG = {
 }
 
 DATABASE_CONFIG = {
-    "enabled_databases": ["openalex", "semantic_scholar", "dblp", ...],
+    "enabled_databases": ["openalex", "semantic_scholar", "dblp", "crossref", "google_scholar", ...],
     "primary_database": "openalex",
-    # Database-specific configurations
+    
+    # Google Scholar Smart Fallback Configuration
+    "google_scholar": {
+        "enabled": ENABLE_GOOGLE_SCHOLAR,
+        "fallback_only": True,              # Only use as last resort
+        "fallback_threshold": 0.7,          # Only search if best similarity < 0.7
+        "min_databases_searched": 3,        # Must search ≥3 other DBs first
+        "rate_limit_delay": 20.0,           # Conservative 20s delays
+        "max_requests_per_hour": 10,        # Ultra conservative limits
+        "max_requests_per_day": 50,
+        # Anti-bot protection measures...
+    }
 }
 
 CLASSIFICATION_CONFIG = {

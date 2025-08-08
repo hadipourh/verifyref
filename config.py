@@ -30,6 +30,11 @@ from typing import Dict, Any
 # Set your email address here for proper API usage
 CROSSREF_EMAIL = "hsn.hadipour@gmail.com"  # ← CHANGE THIS
 
+# Database Configuration (Enable/Disable specific databases)
+# Set to True to enable, False to disable
+ENABLE_CROSSREF = True  # ← Set to True to enable CrossRef database searches
+ENABLE_GOOGLE_SCHOLAR = True  # ← Set to True to enable Google Scholar searches (free but rate-limited)
+
 # OPTIONAL: API Keys for enhanced functionality
 # Leave empty ("") if you don't have these keys - the tool will work without them
 
@@ -39,7 +44,7 @@ SEMANTIC_SCHOLAR_API_KEY = ""  # ← Add your key here
 
 # OpenAI API Key (only needed for AI-powered fraud detection)
 # Get it from: https://platform.openai.com/api-keys
-OPENAI_API_KEY = ""  # ← Add your key here
+OPENAI_API_KEY = "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"  # ← Add your key here
 
 # AI Model Selection (choose which OpenAI model to use for verification)
 # Available options: "gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"
@@ -53,22 +58,22 @@ AI_WEIGHT = 0.50  # ← Increase this to give AI more influence (currently 50%)
 
 # Smart Decision Making Configuration (reduces false positives/negatives)
 # These thresholds control when AI can override traditional database decisions
-AI_OVERRIDE_FABRICATED_THRESHOLD = 0.85  # High bar for overriding fabricated classification
-AI_OVERRIDE_AUTHOR_MANIP_THRESHOLD = 0.80  # High bar for overriding author manipulation
-AI_OVERRIDE_SUSPICIOUS_THRESHOLD = 0.70  # Moderate bar for overriding suspicious
-AI_FRAUD_DETECTION_SENSITIVITY = 0.75  # How sensitive AI fraud detection should be
+AI_OVERRIDE_FABRICATED_THRESHOLD = 0.95  # STRENGTHENED: Very high bar for overriding fabricated classification
+AI_OVERRIDE_AUTHOR_MANIP_THRESHOLD = 0.90  # STRENGTHENED: Very high bar for overriding author manipulation
+AI_OVERRIDE_SUSPICIOUS_THRESHOLD = 0.80  # STRENGTHENED: Higher bar for overriding suspicious
+AI_FRAUD_DETECTION_SENSITIVITY = 0.85  # STRENGTHENED: More sensitive AI fraud detection
 
 # Database-Dependent AI Decision Making (prevents AI over-optimism)
 # Controls how much AI influence is allowed based on database evidence strength
-AI_WEIGHT_WITH_STRONG_DB = 0.2   # Reduced AI influence when database evidence is strong (>0.8)
-AI_WEIGHT_WITH_MODERATE_DB = 0.3 # Moderate AI influence with moderate database evidence (0.6-0.8)
-AI_WEIGHT_WITH_WEAK_DB = 0.4     # Normal AI influence with weak database evidence (0.4-0.6)
-AI_WEIGHT_WITH_VERY_WEAK_DB = 0.5 # Maximum AI influence with very weak database evidence (<0.4)
+AI_WEIGHT_WITH_STRONG_DB = 0.15   # REDUCED: Less AI influence when database evidence is strong (>0.8)
+AI_WEIGHT_WITH_MODERATE_DB = 0.25 # REDUCED: Less AI influence with moderate database evidence (0.6-0.8)
+AI_WEIGHT_WITH_WEAK_DB = 0.30     # REDUCED: Less AI influence with weak database evidence (0.4-0.6)
+AI_WEIGHT_WITH_VERY_WEAK_DB = 0.35 # REDUCED: Less AI influence even with very weak database evidence (<0.4)
 
 # Conservative AI Override Requirements
-AI_MIN_POSITIVE_INDICATORS_HIGH_CONF = 3  # Required positive indicators for high confidence AI claims (>0.8)
-AI_MIN_POSITIVE_INDICATORS_MED_CONF = 2   # Required positive indicators for medium confidence AI claims (>0.7)
-AI_MIN_CONFIDENCE_GAP = 0.3              # Minimum confidence gap required for AI to override database
+AI_MIN_POSITIVE_INDICATORS_HIGH_CONF = 4  # STRENGTHENED: More positive indicators required for high confidence AI claims (>0.8)
+AI_MIN_POSITIVE_INDICATORS_MED_CONF = 3   # STRENGTHENED: More positive indicators required for medium confidence AI claims (>0.7)
+AI_MIN_CONFIDENCE_GAP = 0.5              # STRENGTHENED: Larger confidence gap required for AI to override database
 
 # NCBI/PubMed API Key (optional, for higher PubMed rate limits)
 # Get it from: https://www.ncbi.nlm.nih.gov/account/settings/
@@ -121,7 +126,7 @@ SEMANTIC_SCHOLAR_CONFIG = {
 
 # Multi-Database Configuration
 DATABASE_CONFIG = {
-    "enabled_databases": os.getenv("ENABLED_DATABASES", "openalex,semantic_scholar,dblp,iacr,arxiv,pubmed,springer").split(","),
+    "enabled_databases": os.getenv("ENABLED_DATABASES", "openalex,semantic_scholar,dblp,iacr,arxiv,pubmed,crossref,google_scholar,springer").split(","),
     "primary_database": os.getenv("PRIMARY_DATABASE", "openalex"),
     
     # OpenAlex Configuration (Recommended primary database)
@@ -142,12 +147,12 @@ DATABASE_CONFIG = {
         "enabled": os.getenv("DBLP_ENABLED", "true").lower() == "true"
     },
     
-    # CrossRef Configuration (Optional fallback - disabled by default)
+    # CrossRef Configuration (Optional fallback - controlled by ENABLE_CROSSREF)
     "crossref": {
         "base_url": "https://api.crossref.org/works",
         "timeout": 30,
         "email": CROSSREF_EMAIL if CROSSREF_EMAIL != "your.email@domain.com" else os.getenv("CROSSREF_EMAIL", "your.email@domain.com"),  # Use config first, then env var
-        "enabled": os.getenv("CROSSREF_ENABLED", "false").lower() == "true",  # Disabled by default - use as fallback only
+        "enabled": ENABLE_CROSSREF or os.getenv("CROSSREF_ENABLED", "false").lower() == "true",  # Use config variable first, then env var
         "rate_limit_delay": 1.0,  # Polite delay between requests
         "respect_rate_limits": True
     },
@@ -195,6 +200,56 @@ DATABASE_CONFIG = {
         "rate_limit_delay": 1.0,  # Conservative delay for API compliance
         "max_results": 10,  # Maximum results per search
         "respect_rate_limits": True
+    },
+    
+    # Google Scholar Configuration (Smart Fallback + Anti-Bot Protection)
+    "google_scholar": {
+        "enabled": ENABLE_GOOGLE_SCHOLAR or os.getenv("GOOGLE_SCHOLAR_ENABLED", "false").lower() == "true",  # Disabled by default - respect rate limits
+        "method": "scholarly",  # Free scholarly library
+        
+        # Smart Fallback Strategy - Only use when other databases fail
+        "fallback_only": os.getenv("GOOGLE_SCHOLAR_FALLBACK_ONLY", "true").lower() == "true",  # Use only as last resort
+        "fallback_threshold": float(os.getenv("GOOGLE_SCHOLAR_FALLBACK_THRESHOLD", "0.7")),  # Only search if best match < 0.7
+        "min_databases_searched": int(os.getenv("GOOGLE_SCHOLAR_MIN_DB_SEARCHED", "3")),  # Must search at least 3 other DBs first
+        
+        # Conservative Rate Limiting
+        "rate_limit_delay": float(os.getenv("GOOGLE_SCHOLAR_RATE_LIMIT", "20.0")),  # Very conservative 20 seconds between requests
+        "max_requests_per_hour": int(os.getenv("GOOGLE_SCHOLAR_MAX_HOURLY", "10")),  # Ultra conservative hourly limit
+        "max_requests_per_day": int(os.getenv("GOOGLE_SCHOLAR_MAX_DAILY", "50")),  # Daily limit to stay safe
+        "cooldown_after_block": int(os.getenv("GOOGLE_SCHOLAR_COOLDOWN", "3600")),  # 1 hour cooldown if blocked
+        
+        # Anti-Bot Protection Measures
+        "randomize_delays": True,  # Add random variance to delays (±30%)
+        "min_delay_variance": 0.7,  # Minimum 70% of base delay
+        "max_delay_variance": 1.3,  # Maximum 130% of base delay
+        "session_rotation": True,  # Rotate sessions periodically
+        "max_requests_per_session": 5,  # Limit requests per session before rotation
+        
+        # User Agent Rotation (Academic-focused)
+        "rotate_user_agents": True,
+        "user_agents": [
+            "Mozilla/5.0 (compatible; Academic Research Tool; +research@university.edu)",
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        ],
+        
+        # Network Configuration
+        "timeout": 45,  # Longer timeout to avoid rushing
+        "max_results": 3,  # Limit results to absolute minimum
+        "retry_delay": 600,  # 10 minutes if blocked
+        "max_retries": 2,  # Limited retries
+        
+        # Optional: Institutional proxy support for academic users
+        "proxy_url": os.getenv("GOOGLE_SCHOLAR_PROXY", ""),  # University proxy if available
+        "proxy_rotation": os.getenv("GOOGLE_SCHOLAR_PROXY_ROTATION", "false").lower() == "true",  # Multiple proxies
+        "institutional_access": os.getenv("GOOGLE_SCHOLAR_INSTITUTIONAL", "false").lower() == "true",
+        
+        # Behavioral Mimicking
+        "human_like_behavior": True,
+        "page_load_simulation": True,  # Simulate natural page loading
+        "mouse_movement_simulation": False,  # Keep simple for now
+        "respect_robots_txt": True,
     },
     
     # AI Verification Configuration (Enhanced with Model Selection)
@@ -259,8 +314,8 @@ DATABASE_CONFIG = {
 # Reference Classification Configuration
 CLASSIFICATION_CONFIG = {
     # Core similarity thresholds (0.0 to 1.0)
-    "similarity_threshold": float(os.getenv("SIMILARITY_THRESHOLD", "0.45")),  # Main threshold for authentic classification
-    "suspicious_threshold": float(os.getenv("SUSPICIOUS_THRESHOLD", "0.2")),   # Below this = fabricated/fake
+    "similarity_threshold": float(os.getenv("SIMILARITY_THRESHOLD", "0.55")),  # INCREASED: Main threshold for authentic classification
+    "suspicious_threshold": float(os.getenv("SUSPICIOUS_THRESHOLD", "0.25")),   # INCREASED: Below this = fabricated/fake
     
     # Feature weights (must sum to 1.0)
     "title_weight": float(os.getenv("TITLE_WEIGHT", "0.6")),     # Title similarity importance

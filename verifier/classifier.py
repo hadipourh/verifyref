@@ -65,13 +65,14 @@ class ReferenceClassifier:
     Enhanced with CryptoDB author verification for cryptography papers
     """
     
-    def __init__(self, enable_cryptodb: bool = True, enable_ai_verification: bool = True):
+    def __init__(self, enable_cryptodb: bool = True, enable_ai_verification: bool = True, google_scholar_client=None):
         """
         Initialize the reference classifier
         
         Args:
             enable_cryptodb: Whether to enable CryptoDB author verification (optional)
             enable_ai_verification: Whether to enable AI-powered verification (optional)
+            google_scholar_client: GoogleScholarClient instance for secondary validation (optional)
         """
         # Load configuration settings
         self.similarity_threshold = CLASSIFICATION_CONFIG["similarity_threshold"]
@@ -135,6 +136,11 @@ class ReferenceClassifier:
                 logger.warning("AI verifier not available")
             except Exception as e:
                 logger.warning(f"Failed to initialize AI verifier: {e}")
+        
+        # Google Scholar client for secondary validation
+        self.google_scholar_client = google_scholar_client
+        if self.google_scholar_client:
+            logger.info("Google Scholar validation enabled for author manipulation detection")
     
     def classify_reference(self, 
                          extracted_ref: Dict[str, Any], 
@@ -386,7 +392,8 @@ class ReferenceClassifier:
     def _determine_classification(self, 
                                 extracted_ref: Dict[str, Any], 
                                 best_match: Optional[Dict[str, Any]], 
-                                similarity_score: float) -> Tuple[ClassificationResult, float, List[str]]:
+                                similarity_score: float,
+                                search_results: List[Dict[str, Any]] = None) -> Tuple[ClassificationResult, float, List[str]]:
         """
         Determine the final classification based on similarity and other factors
         
@@ -400,10 +407,24 @@ class ReferenceClassifier:
         """
         reasons = []
         
-        # High similarity threshold - likely authentic
+        # High similarity threshold - likely authentic BUT require stronger evidence for moderate scores
         if similarity_score >= self.similarity_threshold:
             confidence = min(0.95, similarity_score + 0.1)
             reasons.append(f"High similarity score ({similarity_score:.2f})")
+            
+            # ENHANCED: For moderate high similarity (0.55-0.80), require additional evidence
+            if similarity_score < 0.80 and search_results:
+                major_databases = {'openalex', 'semantic_scholar', 'dblp', 'pubmed', 'arxiv', 'iacr'}
+                found_in_major_db = any(db in major_databases for db in {r.get('source', 'unknown') for r in search_results})
+                
+                # If moderate similarity and no major database, be more cautious
+                if not found_in_major_db:
+                    confidence -= 0.15  # Reduce confidence significantly
+                    reasons.append("Moderate similarity without major database confirmation")
+                    
+                    # For borderline cases (0.55-0.65), downgrade to suspicious
+                    if similarity_score < 0.65:
+                        return ClassificationResult.SUSPICIOUS, max(0.4, confidence), reasons + ["Borderline similarity requires stronger database evidence"]
             
             if best_match:
                 # Additional checks for authenticity
@@ -618,6 +639,32 @@ class ReferenceClassifier:
                     if enhancement.get('legitimate_match', False):
                         continue
                 
+                # NEW: Google Scholar validation for author manipulation detection
+                # Use Google Scholar to validate our author manipulation detection
+                if self.google_scholar_client and self.google_scholar_client.should_validate_author_manipulation('author_manipulation'):
+                    logger.info(f"Validating author manipulation detection with Google Scholar for title: {extracted_ref.get('title', 'N/A')}")
+                    
+                    validation_result = self.google_scholar_client.validate_author_manipulation(
+                        extracted_ref.get('title', ''),
+                        extracted_ref.get('authors', []),
+                        paper.get('title', ''),
+                        paper.get('authors', [])
+                    )
+                    
+                    if validation_result.get('validated') == False:
+                        # Google Scholar suggests this is not manipulation - override our detection
+                        logger.info(f"Google Scholar validation overrode author manipulation detection: {validation_result.get('evidence', 'Unknown reason')}")
+                        continue  # Skip fraud detection and continue with next paper
+                    elif validation_result.get('validated') == True:
+                        # Google Scholar confirms our detection
+                        logger.info(f"Google Scholar validation confirmed author manipulation: {validation_result.get('evidence', 'Unknown reason')}")
+                        # Add Google Scholar validation details to fraud detection
+                        cryptodb_details['google_scholar_validation'] = validation_result
+                    else:
+                        # Inconclusive - proceed with original detection but add note
+                        logger.info(f"Google Scholar validation inconclusive: {validation_result.get('evidence', 'Unknown reason')}")
+                        cryptodb_details['google_scholar_validation'] = validation_result
+                
                 return VerificationResult(
                     classification=ClassificationResult.AUTHOR_MANIPULATION,
                     confidence=confidence,
@@ -706,10 +753,57 @@ class ReferenceClassifier:
         databases = set(r.get('source', 'unknown') for r in search_results)
         num_databases = len(databases)
         
+        # CRITICAL: Check if major databases found nothing
+        major_databases = {'openalex', 'semantic_scholar', 'dblp', 'pubmed', 'arxiv', 'iacr'}
+        found_in_major_db = any(db in major_databases for db in databases)
+        
+        # If no major database found anything AND similarity is low, likely fabricated
+        if not found_in_major_db and similarity_score < 0.5:
+            # Use Google Scholar validation if available for final confirmation
+            if self.google_scholar_client and self.google_scholar_client.should_validate_fabrication_suspicion(list(databases), similarity_score):
+                validation_result = self.google_scholar_client.validate_fabrication_suspicion(
+                    extracted_ref.get('title', ''),
+                    extracted_ref.get('authors', []),
+                    extracted_ref.get('year')
+                )
+                
+                if validation_result.get('validated') == True:
+                    # Google Scholar confirms fabrication
+                    reasons.append("No major academic databases found this reference")
+                    reasons.append(f"Low similarity score ({similarity_score:.2f}) with partial matches only")
+                    reasons.append(f"Google Scholar validation confirms: {validation_result.get('evidence', 'Paper not found')}")
+                    return ClassificationResult.FABRICATED, 0.85, reasons
+                elif validation_result.get('validated') == False:
+                    # Google Scholar found the paper - continue with normal classification
+                    reasons.append(f"Google Scholar validation found legitimate paper: {validation_result.get('evidence', 'Paper exists')}")
+                else:
+                    # Inconclusive Google Scholar result
+                    reasons.append(f"Google Scholar validation inconclusive: {validation_result.get('evidence', 'Mixed evidence')}")
+            else:
+                # No Google Scholar validation available - use conservative classification
+                reasons.append("No major academic databases found this reference")
+                reasons.append(f"Low similarity score ({similarity_score:.2f}) with partial matches only")
+                reasons.append("Pattern suggests fabricated reference")
+                return ClassificationResult.FABRICATED, 0.75, reasons
+        
         # Authentic classification using configurable threshold
         if similarity_score >= self.similarity_threshold:
             confidence = min(0.95, similarity_score + self.authentic_confidence_boost)
             reasons.append(f"High similarity score ({similarity_score:.2f}) above threshold ({self.similarity_threshold:.2f})")
+            
+            # ENHANCED: For moderate high similarity (0.55-0.80), require stronger evidence
+            if similarity_score < 0.80:
+                major_databases = {'openalex', 'semantic_scholar', 'dblp', 'pubmed', 'arxiv', 'iacr'}
+                found_in_major_db = any(db in major_databases for db in databases)
+                
+                # If moderate similarity and no major database, be more cautious
+                if not found_in_major_db:
+                    confidence -= 0.20  # Reduce confidence significantly
+                    reasons.append("CAUTION: Moderate similarity without major database confirmation")
+                    
+                    # For borderline cases (0.55-0.70), downgrade to suspicious unless multiple small databases
+                    if similarity_score < 0.70 and num_databases < 3:
+                        return ClassificationResult.SUSPICIOUS, max(0.4, confidence - 0.1), reasons + ["Borderline similarity requires stronger database evidence or multiple sources"]
             
             # Multiple database presence adds confidence
             if num_databases >= 2:
@@ -993,18 +1087,18 @@ class ReferenceClassifier:
             required_db_weakness = 0.6
             max_upgrade = ClassificationResult.AUTHENTIC
         
-        # Enhanced safety checks for AI override - MORE RESTRICTIVE
+        # Enhanced safety checks for AI override - MUCH MORE RESTRICTIVE
         safety_passed = True
         safety_reasons = []
         
-        # Check 1: Database evidence must be weak enough to question
+        # Check 1: Database evidence must be weak enough to question - STRENGTHENED
         if db_evidence > required_db_weakness:
             safety_passed = False
             safety_reasons.append(f"Database evidence too strong ({db_evidence:.2f}) to override with AI")
         
-        # Check 2: AI must have very strong positive indicators for high-confidence claims
-        min_indicators_high = getattr(config, 'AI_MIN_POSITIVE_INDICATORS_HIGH_CONF', 3)
-        min_indicators_med = getattr(config, 'AI_MIN_POSITIVE_INDICATORS_MED_CONF', 2)
+        # Check 2: AI must have very strong positive indicators for high-confidence claims - STRENGTHENED
+        min_indicators_high = getattr(config, 'AI_MIN_POSITIVE_INDICATORS_HIGH_CONF', 4)  # Increased from 3
+        min_indicators_med = getattr(config, 'AI_MIN_POSITIVE_INDICATORS_MED_CONF', 3)    # Increased from 2
         
         if ai_verification.confidence > 0.8:
             if len(ai_verification.positive_indicators) < min_indicators_high:
@@ -1015,30 +1109,37 @@ class ReferenceClassifier:
                 safety_passed = False
                 safety_reasons.append(f"AI moderate confidence requires at least {min_indicators_med} positive indicators")
         
-        # Check 3: AI should have NO significant red flags for authentic claims
-        if len(ai_verification.red_flags) >= 1:  # Changed from 2 to 1 - stricter
+        # Check 3: AI should have NO red flags for authentic claims - STRENGTHENED
+        if len(ai_verification.red_flags) >= 1:
             safety_passed = False
             safety_reasons.append("AI cannot claim authentic while having any red flags")
         
-        # Check 4: Database similarity threshold - very conservative
-        if db_confidence < 0.2 and ai_evidence < 0.9:  # Increased AI requirement
+        # Check 4: Database similarity threshold - MUCH MORE CONSERVATIVE
+        if db_confidence < 0.3 and ai_evidence < 0.95:  # Increased AI requirement
             safety_passed = False
-            safety_reasons.append("Extremely low database match requires near-perfect AI evidence (>0.9)")
-        elif db_confidence < 0.5 and ai_evidence < 0.85:
+            safety_reasons.append("Very low database match requires near-perfect AI evidence (>0.95)")
+        elif db_confidence < 0.6 and ai_evidence < 0.90:  # Increased thresholds
             safety_passed = False
-            safety_reasons.append("Low database match requires very strong AI evidence (>0.85)")
+            safety_reasons.append("Low database match requires exceptional AI evidence (>0.90)")
         
-        # Check 5: AI reasoning quality assessment
-        if ai_verification.reasoning and len(ai_verification.reasoning) < 50:
+        # Check 5: AI reasoning quality assessment - STRENGTHENED
+        if ai_verification.reasoning and len(ai_verification.reasoning) < 100:  # Increased from 50
             safety_passed = False
             safety_reasons.append("AI reasoning too brief for override decision")
         
-        # Check 6: Confidence gap requirement - AI must be significantly more confident
-        min_confidence_gap = getattr(config, 'AI_MIN_CONFIDENCE_GAP', 0.3)
+        # Check 6: Confidence gap requirement - STRENGTHENED
+        min_confidence_gap = getattr(config, 'AI_MIN_CONFIDENCE_GAP', 0.5)  # Increased from 0.3
         confidence_gap = ai_verification.confidence - db_confidence
         if confidence_gap < min_confidence_gap:
             safety_passed = False
             safety_reasons.append(f"AI confidence gap insufficient ({confidence_gap:.2f} < {min_confidence_gap})")
+        
+        # NEW Check 7: Major database requirement - if no major DB found the paper, be extra cautious
+        major_databases = {'openalex', 'semantic_scholar', 'dblp', 'pubmed', 'arxiv', 'iacr'}
+        if not any(indicator for indicator in ai_verification.positive_indicators 
+                  if any(db in indicator.lower() for db in major_databases)):
+            safety_passed = False
+            safety_reasons.append("No evidence of paper in major academic databases - high risk of fabrication")
         
         # Make decision based on evidence strength and safety checks
         if ai_evidence >= required_ai_strength and safety_passed:

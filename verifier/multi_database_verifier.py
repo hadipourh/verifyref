@@ -30,6 +30,7 @@ from .arxiv_client import ArXivClient
 from .pubmed_client import PubMedClient
 from .openalex_client import OpenAlexClient
 from .springer_client import SpringerNatureClient
+from .google_scholar_client import GoogleScholarClient
 from config import DATABASE_CONFIG
 
 logger = logging.getLogger(__name__)
@@ -99,6 +100,14 @@ class MultiDatabaseVerifier:
             else:
                 logger.info("Springer Nature disabled: API key required (no free tier available)")
                 logger.info("Get your free API key at: https://dev.springernature.com/")
+        
+        if "google_scholar" in self.enabled_databases and DATABASE_CONFIG.get("google_scholar", {}).get("enabled", True):
+            try:
+                self.clients["google_scholar"] = GoogleScholarClient()
+                logger.debug("Google Scholar enabled with smart fallback strategy")
+            except Exception as e:
+                logger.warning(f"Failed to initialize Google Scholar client: {e}")
+                logger.info("Google Scholar disabled due to initialization error")
         
         # Initialize CryptoDB client (optional)
         self.cryptodb_client = None

@@ -1,0 +1,56 @@
+# VerifyRef Test References
+# This file contains a mix of authentic and fabricated references for testing the system's accuracy
+# Expected classifications are noted in comments
+
+## AUTHENTIC REFERENCES (should classify as AUTHENTIC)
+
+# Classic cryptography paper - should be AUTHENTIC
+David Wagner. The Boomerang Attack. In Lecture Notes in Computer Science, 1999.
+
+# Well-known cryptanalysis paper - should be AUTHENTIC  
+Orr Dunkelman, Nathan Keller, Adi Shamir. A Practical-Time Related-Key Attack on the KASUMI Cryptosystem Used in GSM and 3G Telephony. Journal of Cryptology, 2014.
+
+# Modern cryptography tool paper - should be AUTHENTIC
+Carlos Cid, Tao Huang, Thomas Peyrin, Yu Sasaki, Yosuke Todo. Boomerang Connectivity Table: A New Cryptanalysis Tool. In Lecture Notes in Computer Science, 2018.
+
+# Differential cryptanalysis paper - should be AUTHENTIC
+Eli Biham, Adi Shamir. Differential Cryptanalysis of DES-like Cryptosystems. Journal of Cryptology, 1991.
+
+# AES cryptanalysis - should be AUTHENTIC
+Lars Knudsen, David Wagner. Integral Cryptanalysis. In Fast Software Encryption, pages 112-127. Springer, 2002.
+
+## SUSPICIOUS/PROBLEMATIC REFERENCES (should NOT classify as AUTHENTIC)
+
+# Author name corruption - should be SUSPICIOUS (actual authors: Orr Dunkelman, Nathan Keller, Adi Shamir)
+Nathan Orr Dunkelman, Adi Keller, Shamir. A practical distinguisher for arx with application to salsa20. In International Conference on the Theory and Application of Cryptology and Information Security, pages 318-335. Springer, 2010.
+
+# Fabricated reference #1 - should be SUSPICIOUS/FABRICATED
+Catching the boomerangs: a new method to improve finding boomerang attacks. In Computer Science and Social Engineering, pages 13–22. Springer, 2018.
+
+# Fabricated reference #2 - should be SUSPICIOUS/FABRICATED  
+John Smith, Alice Johnson. Advanced Quantum Cryptanalysis of Classical Ciphers. In Proceedings of the International Conference on Impossible Mathematics, pages 45-67. MIT Press, 2019.
+
+# Non-existent venue - should be SUSPICIOUS/FABRICATED
+Bob Wilson, Carol Davis. Revolutionary Breakthrough in Zero-Knowledge Proofs. In Journal of Theoretical Computer Magic, volume 15, pages 123-145, 2020.
+
+# Impossible temporal reference - should be SUSPICIOUS/FABRICATED
+Marie Curie, Albert Einstein. Quantum Cryptography for Blockchain Applications. In IEEE Transactions on Future Technologies, volume 99, pages 1-25, 2025.
+
+## EDGE CASES FOR TESTING
+
+# Real paper with slight title variation - should handle gracefully
+David Wagner. The Boomerang Attack on Block Ciphers. Fast Software Encryption, 1999.
+
+# Real authors but wrong venue - should be caught as manipulation
+Orr Dunkelman, Nathan Keller, Adi Shamir. Differential-Linear Attacks on AES. In Proceedings of the Conference on Fake Cryptography, pages 100-115, 2015.
+
+# Partial information - should handle appropriately
+Unknown Author. Some Cryptographic Analysis. In Some Conference, 2018.
+
+## RECENT AUTHENTIC PAPERS (should classify as AUTHENTIC)
+
+# Recent IACR paper - should be AUTHENTIC
+Gaëtan Leurent, Ferdinand Sibleyras. The MALICIOUS Framework: Embedding Backdoors into Tweakable Block Ciphers. In Advances in Cryptology - CRYPTO 2021, pages 249-278. Springer, 2021.
+
+# Modern differential cryptanalysis - should be AUTHENTIC  
+Haoyang Wang, Thomas Peyrin. Boomerang Uniformity of Popular S-box Constructions. In Advances in Cryptology - ASIACRYPT 2020, pages 749-678. Springer, 2020.
