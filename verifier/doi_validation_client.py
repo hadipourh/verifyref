@@ -100,6 +100,221 @@ class DOIValidationClient:
             
         return None
     
+    def validate_doi_metadata_match(self, doi: str, claimed_title: str, claimed_authors: list, 
+                                   claimed_year: int = None, claimed_venue: str = None) -> Dict[str, Any]:
+        """
+        Validate that DOI metadata matches the claimed paper details
+        
+        Args:
+            doi: DOI string to validate
+            claimed_title: Title claimed in the reference
+            claimed_authors: List of authors claimed in the reference
+            claimed_year: Publication year claimed in the reference
+            claimed_venue: Venue/journal claimed in the reference
+            
+        Returns:
+            Dict with validation results and metadata comparison
+        """
+        if not doi or not claimed_title or not claimed_authors:
+            return {
+                'metadata_valid': False,
+                'error': 'Missing required fields for metadata validation',
+                'confidence_boost': 0.0
+            }
+        
+        # First validate DOI resolves
+        doi_validation = self.validate_doi(doi)
+        if not doi_validation.get('valid', False):
+            return {
+                'metadata_valid': False,
+                'error': f"DOI does not resolve: {doi_validation.get('error', 'Unknown error')}",
+                'confidence_boost': 0.0
+            }
+        
+        # Get metadata from DOI
+        metadata = self.get_doi_metadata(doi)
+        if not metadata:
+            return {
+                'metadata_valid': False,
+                'error': 'Could not retrieve metadata from DOI',
+                'doi_resolves': True,
+                'confidence_boost': 0.05  # Small boost for valid DOI, but no metadata match
+            }
+        
+        # Compare metadata
+        comparison_results = self._compare_metadata(
+            metadata, claimed_title, claimed_authors, claimed_year, claimed_venue
+        )
+        
+        # Calculate confidence boost based on matches
+        confidence_boost = self._calculate_metadata_confidence_boost(comparison_results)
+        
+        return {
+            'metadata_valid': comparison_results['overall_match'],
+            'doi_resolves': True,
+            'metadata_comparison': comparison_results,
+            'doi_metadata': {
+                'title': metadata.get('title', ''),
+                'authors': self._extract_authors_from_metadata(metadata),
+                'year': metadata.get('published-print', {}).get('date-parts', [[None]])[0][0] or 
+                       metadata.get('published-online', {}).get('date-parts', [[None]])[0][0],
+                'venue': metadata.get('container-title', [''])[0] if metadata.get('container-title') else '',
+                'publisher': metadata.get('publisher', '')
+            },
+            'confidence_boost': confidence_boost,
+            'validation_details': comparison_results['details']
+        }
+    
+    def _compare_metadata(self, doi_metadata: Dict, claimed_title: str, claimed_authors: list,
+                         claimed_year: int = None, claimed_venue: str = None) -> Dict[str, Any]:
+        """Compare DOI metadata with claimed reference details"""
+        
+        # Extract DOI metadata
+        doi_title = doi_metadata.get('title', '')
+        doi_authors = self._extract_authors_from_metadata(doi_metadata)
+        doi_year = (doi_metadata.get('published-print', {}).get('date-parts', [[None]])[0][0] or 
+                   doi_metadata.get('published-online', {}).get('date-parts', [[None]])[0][0])
+        doi_venue = (doi_metadata.get('container-title', [''])[0] if doi_metadata.get('container-title') 
+                    else '')
+        
+        results = {
+            'title_match': False,
+            'authors_match': False,
+            'year_match': False,
+            'venue_match': False,
+            'overall_match': False,
+            'details': []
+        }
+        
+        # Title comparison
+        title_similarity = self._calculate_title_similarity(claimed_title, doi_title)
+        results['title_match'] = title_similarity > 0.7  # 70% similarity threshold
+        results['title_similarity'] = title_similarity
+        results['details'].append(f"Title similarity: {title_similarity:.2f} (claimed: '{claimed_title}' vs DOI: '{doi_title}')")
+        
+        # Authors comparison
+        author_match_score = self._calculate_author_similarity(claimed_authors, doi_authors)
+        results['authors_match'] = author_match_score > 0.6  # 60% similarity threshold
+        results['author_similarity'] = author_match_score
+        results['details'].append(f"Author similarity: {author_match_score:.2f} (claimed: {claimed_authors} vs DOI: {doi_authors})")
+        
+        # Year comparison
+        if claimed_year and doi_year:
+            year_diff = abs(claimed_year - doi_year)
+            results['year_match'] = year_diff <= 1  # Allow 1 year difference
+            results['year_difference'] = year_diff
+            results['details'].append(f"Year difference: {year_diff} (claimed: {claimed_year} vs DOI: {doi_year})")
+        
+        # Venue comparison (optional)
+        if claimed_venue and doi_venue:
+            venue_similarity = self._calculate_title_similarity(claimed_venue, doi_venue)
+            results['venue_match'] = venue_similarity > 0.5  # 50% similarity threshold
+            results['venue_similarity'] = venue_similarity
+            results['details'].append(f"Venue similarity: {venue_similarity:.2f} (claimed: '{claimed_venue}' vs DOI: '{doi_venue}')")
+        
+        # Overall match determination - require title and authors to match
+        results['overall_match'] = (results['title_match'] and results['authors_match'] and
+                                  (not claimed_year or results['year_match']))
+        
+        return results
+    
+    def _extract_authors_from_metadata(self, metadata: Dict) -> list:
+        """Extract author names from DOI metadata"""
+        authors = []
+        author_list = metadata.get('author', [])
+        
+        for author in author_list:
+            if isinstance(author, dict):
+                given = author.get('given', '')
+                family = author.get('family', '')
+                if given and family:
+                    authors.append(f"{given} {family}")
+                elif family:
+                    authors.append(family)
+        
+        return authors
+    
+    def _calculate_title_similarity(self, title1: str, title2: str) -> float:
+        """Calculate similarity between two titles using simple token-based approach"""
+        if not title1 or not title2:
+            return 0.0
+        
+        # Simple token-based similarity
+        from difflib import SequenceMatcher
+        # Normalize titles
+        t1 = title1.lower().strip()
+        t2 = title2.lower().strip()
+        
+        # Calculate sequence similarity
+        similarity = SequenceMatcher(None, t1, t2).ratio()
+        
+        return similarity
+    
+    def _calculate_author_similarity(self, claimed_authors: list, doi_authors: list) -> float:
+        """Calculate similarity between author lists"""
+        if not claimed_authors or not doi_authors:
+            return 0.0
+        
+        # Normalize author names for comparison
+        def normalize_author(author):
+            return author.lower().strip().replace('.', '').replace(',', '')
+        
+        claimed_normalized = [normalize_author(a) for a in claimed_authors]
+        doi_normalized = [normalize_author(a) for a in doi_authors]
+        
+        # Calculate how many claimed authors have matches in DOI authors
+        matches = 0
+        for claimed in claimed_normalized:
+            for doi_author in doi_normalized:
+                # Check if names match (allowing for different name orders)
+                if self._authors_match(claimed, doi_author):
+                    matches += 1
+                    break
+        
+        # Return ratio of matched authors
+        return matches / max(len(claimed_authors), len(doi_authors))
+    
+    def _authors_match(self, author1: str, author2: str) -> bool:
+        """Check if two author names refer to the same person"""
+        # Split names into tokens
+        tokens1 = set(author1.split())
+        tokens2 = set(author2.split())
+        
+        # Check for significant overlap in name tokens
+        intersection = tokens1.intersection(tokens2)
+        union = tokens1.union(tokens2)
+        
+        if not union:
+            return False
+        
+        # Require at least 60% token overlap
+        return len(intersection) / len(union) >= 0.6
+    
+    def _calculate_metadata_confidence_boost(self, comparison_results: Dict) -> float:
+        """Calculate confidence boost based on metadata matching quality"""
+        if not comparison_results['overall_match']:
+            # If metadata doesn't match, DOI might be fraudulent or wrong
+            return -0.1  # Slight penalty for non-matching DOI
+        
+        # Strong matches get higher boost
+        boost = 0.1  # Base boost for valid DOI with matching metadata
+        
+        # Add bonuses for strong matches
+        if comparison_results.get('title_similarity', 0) > 0.9:
+            boost += 0.05  # Strong title match
+        
+        if comparison_results.get('author_similarity', 0) > 0.8:
+            boost += 0.05  # Strong author match
+        
+        if comparison_results.get('year_match', False):
+            boost += 0.02  # Year match
+        
+        if comparison_results.get('venue_match', False):
+            boost += 0.03  # Venue match
+        
+        # Cap the maximum boost
+        return min(boost, 0.2)  # Maximum 20% boost for perfect metadata match
+    
     def _clean_doi(self, doi: str) -> Optional[str]:
         """Clean and validate DOI format"""
         if not doi:

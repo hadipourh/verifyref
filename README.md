@@ -66,7 +66,7 @@ This tool helps reviewers quickly identify potentially fabricated references and
 - **Google Scholar Author Validation**: Secondary validation layer to distinguish legitimate papers from manipulation
 - **Google Scholar Fabrication Detection**: Advanced validation to detect fabricated references using comprehensive search
 - **AI-Powered Analysis**: Optional GPT-based fraud detection and pattern recognition
-- **DOI Validation & False Negative Reduction**: Direct DOI resolution verification to rescue legitimate papers with poor database coverage
+- **Enhanced DOI Validation & Fraud Prevention**: Comprehensive metadata matching to verify DOI authenticity and prevent fraudulent DOI usage
 - **Enhanced Fraud Detection**: Advanced author manipulation detection with multi-layered validation
 - **Stricter Classification Thresholds**: Conservative similarity requirements (0.55) and suspicious thresholds (0.25) for improved accuracy
 - **Major Database Requirements**: Enhanced validation requiring evidence from authoritative academic databases
@@ -159,7 +159,7 @@ VerifyRef uses a 5-category system with enhanced accuracy thresholds to evaluate
 **Enhanced Accuracy Features**:
 - **Stricter Thresholds**: Similarity threshold increased from 45% to 55% for more conservative classification
 - **Major Database Requirements**: Papers must be found in authoritative databases (OpenAlex, DBLP, PubMed, etc.)
-- **DOI Validation**: Valid DOIs provide confidence boost and help reduce false negatives
+- **Enhanced DOI Validation**: DOI resolution + metadata verification to prevent fraud and reduce false negatives
 - **Google Scholar Fabrication Detection**: Advanced validation for suspected fabricated references
 - **Conservative AI Override**: AI requires exceptional evidence (>90% confidence) to override database findings
 
@@ -170,7 +170,7 @@ VerifyRef uses a 5-category system with enhanced accuracy thresholds to evaluate
 **Primary**: OpenAlex (comprehensive coverage, no rate limits)  
 **Specialized**: DBLP (CS), PubMed (Bio), IACR (Crypto), ArXiv (Preprints), Springer Nature (STM), Semantic Scholar, CrossRef  
 **Smart Fallback**: Google Scholar (used only when other databases find similarity < 0.7)  
-**DOI Validation**: Direct DOI resolution via doi.org for authenticity verification
+**Enhanced DOI Validation**: Comprehensive metadata matching via doi.org to prevent DOI fraud
 
 **Major Database Authority**:
 VerifyRef now prioritizes evidence from major academic databases (OpenAlex, Semantic Scholar, DBLP, PubMed, ArXiv, IACR) and requires stronger evidence for authentic classification when papers are not found in these authoritative sources.
@@ -182,7 +182,8 @@ VerifyRef now prioritizes evidence from major academic databases (OpenAlex, Sema
 
 **Enhanced Validation Features**:
 - **Google Scholar Fabrication Detection**: Triggered when no major databases find matches and similarity < 0.5
-- **DOI Resolution Verification**: Valid DOIs (10.xxxx/xxxx) are resolved via doi.org to confirm authenticity
+- **Enhanced DOI Validation**: DOIs are resolved via doi.org AND metadata (title, authors, year) is verified against claimed details to prevent fraud
+- **DOI Fraud Prevention**: Papers with valid but mismatched DOI metadata receive confidence penalties instead of boosts
 - **Conservative Thresholds**: Borderline cases (55-70% similarity) without major database evidence are classified as suspicious
 - **Multi-Source Requirements**: Moderate similarity papers require evidence from multiple databases or major database confirmation
 

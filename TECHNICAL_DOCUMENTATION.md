@@ -582,17 +582,24 @@ def validate_potential_fabrication(self, title, authors, year) -> Dict:
     }
 ```
 
-**NEW: DOI Validation Client** (`verifier/doi_validation_client.py`) - **Validation System**:
-- **Direct DOI Resolution**: Validates DOIs by attempting resolution via doi.org
-- **False Negative Reduction**: Helps authenticate papers with valid DOIs but poor database coverage
+**ENHANCED: DOI Validation Client** (`verifier/doi_validation_client.py`) - **Advanced Validation System**:
+- **Enhanced Metadata Validation**: Validates DOI resolution AND verifies metadata matches claimed paper details
+- **Fraud Prevention**: Detects mismatched DOI usage where valid DOIs are used with incorrect metadata
+- **Comprehensive Metadata Comparison**: Compares title, authors, year, and venue from DOI resolver with claimed details
+- **Similarity Scoring**: Uses sophisticated algorithms for title/author matching with configurable thresholds
 - **Publisher Identification**: Extracts publisher information from resolved URLs (IEEE, ACM, Springer, etc.)
 - **Content Negotiation**: Retrieves metadata in multiple formats (JSON, CSL)
 - **Format Validation**: Comprehensive DOI format checking and normalization
 
 ```python
 class DOIValidationClient:
+    def validate_doi_metadata_match(self, doi: str, claimed_title: str, claimed_authors: list, 
+                                   claimed_year: int = None, claimed_venue: str = None) -> Dict[str, Any]:
+        # Enhanced validation that compares DOI metadata with claimed paper details
+        # Returns metadata validity, confidence boost/penalty, and detailed comparison
+        
     def validate_doi(self, doi: str) -> Dict[str, Any]:
-        # Direct resolution test via https://doi.org/{doi}
+        # Simple DOI resolution test via https://doi.org/{doi}
         # Returns validation status, resolved URL, publisher info
         
     def get_doi_metadata(self, doi: str) -> Optional[Dict[str, Any]]:
@@ -600,11 +607,13 @@ class DOIValidationClient:
         # Supports CSL-JSON and other standard formats
 ```
 
-**DOI Integration Benefits**:
-- **Confidence Boost**: Valid DOIs increase authentic classification confidence by 15-20%
-- **Rescue Mechanism**: Papers with valid DOIs but poor database matches get upgraded from SUSPICIOUS to AUTHENTIC
+**Enhanced DOI Security Features**:
+- **Metadata Matching**: DOIs must have matching title (>70% similarity) and authors (>60% similarity)
+- **Fraud Detection**: DOIs with mismatched metadata trigger fraud warnings and confidence penalties
+- **Dynamic Confidence Scoring**: Perfect metadata match gives +0.2 boost, mismatch gives -0.1 penalty
+- **Rescue Mechanism**: Papers with valid DOIs and matching metadata get upgraded even with poor database coverage
 - **Publisher Validation**: Cross-reference with expected publishers for additional verification
-- **Format Standardization**: Normalized DOI cleaning and validation
+- **Detailed Evidence**: Provides comprehensive comparison results for transparency
 
 ### 4. Enhanced Smart Fallback Strategy (Conservative 2025 Approach)
 
@@ -759,7 +768,7 @@ def classify_with_enhanced_accuracy(similarity, has_major_db_evidence, doi_valid
 2. **Raised Similarity Threshold**: Increased from 45% to 55% for AUTHENTIC classification  
 3. **Conservative Borderline Handling**: 55-70% similarity without major DB evidence → SUSPICIOUS
 4. **Stricter AI Override**: Increased threshold from 85% to 95% confidence
-5. **DOI Validation Integration**: Valid DOIs provide 15% confidence boost
+5. **Enhanced DOI Metadata Validation**: DOI resolution + metadata verification prevents fraud and provides dynamic confidence adjustments
 6. **Enhanced Evidence Requirements**: Multiple positive indicators required for high-confidence classifications
 
 **Classification Flow with Enhanced Safety**:
@@ -770,14 +779,19 @@ def enhanced_classification_flow(paper_data):
     major_db_results = search_major_databases(paper_data)
     has_major_evidence = any(result.similarity >= 0.55 for result in major_db_results)
     
-    # 2. DOI validation for confidence boost
-    doi_validation = validate_doi(paper_data.doi) if paper_data.doi else None
+    # 2. Enhanced DOI metadata validation for fraud prevention
+    doi_validation = None
+    if paper_data.doi:
+        doi_validation = validate_doi_metadata_match(
+            paper_data.doi, paper_data.title, paper_data.authors, paper_data.year
+        )
+        # Results in confidence boost (+0.2) for matching metadata or penalty (-0.1) for mismatch
     
     # 3. Smart fallback to Google Scholar only if major DBs fail
     if not has_major_evidence and best_similarity < 0.7:
         google_scholar_results = search_google_scholar_with_validation(paper_data)
     
-    # 4. Enhanced classification with conservative thresholds
+    # 4. Enhanced classification with conservative thresholds and DOI fraud detection
     classification = classify_with_enhanced_accuracy(
         best_similarity, has_major_evidence, doi_validation, ai_scores
     )
@@ -787,9 +801,10 @@ def enhanced_classification_flow(paper_data):
 
 **Accuracy Improvements Achieved**:
 - **40% reduction in false positives** (fabricated papers incorrectly classified as authentic)
+- **Enhanced DOI fraud prevention** prevents exploitation of unrelated but valid DOIs
 - **25% improvement in conservative classification** (borderline cases handled more safely)
 - **Enhanced evidence requirements** prevent over-confident classifications
-- **DOI validation rescue mechanism** reduces false negatives for legitimate papers
+- **DOI metadata validation rescue mechanism** reduces false negatives for legitimate papers with proper DOI metadata
 
 ### 7. Context-Aware Database Selection
 
@@ -1116,7 +1131,7 @@ python generate_accuracy_report.py --before-after-comparison
 **Measured Accuracy Improvements**:
 - **Fabricated Paper Detection**: 40% reduction in false positives (72.1% → 26.1% for test fabricated references)
 - **Conservative Classification**: 25% improvement in borderline case handling  
-- **DOI Validation**: 20% reduction in false negatives for papers with valid DOIs
+- **Enhanced DOI Validation**: Comprehensive fraud prevention through metadata matching, preventing exploitation of unrelated valid DOIs
 - **Author Manipulation Detection**: 30% improvement in distinguishing fraud from legitimate papers
 - **Overall System Confidence**: Enhanced evidence requirements improved classification reliability
 
@@ -1181,7 +1196,7 @@ class CustomAIVerifier(AIReferenceVerifier):
 6. **Thread Safe Design**: Proper locking for concurrent operations
 7. **Enhanced AI Integration with Safety Controls**: Configurable AI weight and model selection with conservative override thresholds
 8. **Google Scholar Smart Fallback with Dual Validation**: Author manipulation validation + fabrication detection when major databases fail
-9. **DOI Validation Integration**: Direct DOI resolution for false negative reduction and confidence boosting
+9. **Enhanced DOI Validation with Fraud Prevention**: Comprehensive metadata matching to verify DOI authenticity and prevent fraudulent DOI usage
 10. **Conservative Classification System**: 55% similarity threshold + major database requirements + evidence-based decision making
 11. **Accuracy-First Design**: 40% reduction in false positives through systematic threshold strengthening
 12. **Comprehensive Testing Framework**: Automated validation with authentic/fabricated/borderline test cases
@@ -1191,7 +1206,7 @@ class CustomAIVerifier(AIReferenceVerifier):
 - **Stricter Similarity Thresholds**: Increased from 45% to 55% for authentic classification
 - **Enhanced AI Safety Controls**: Raised AI override threshold from 85% to 95%
 - **Conservative Borderline Handling**: 55-70% similarity without major DB evidence defaults to SUSPICIOUS
-- **DOI Rescue Mechanism**: Valid DOIs provide confidence boost and prevent false negatives
+- **Enhanced DOI Fraud Prevention**: Comprehensive metadata validation prevents exploitation of unrelated valid DOIs
 - **Google Scholar Fabrication Detection**: Final authority validation when major databases find no evidence
 - **Evidence-Based Classification**: Multiple positive indicators required for high-confidence classifications
 

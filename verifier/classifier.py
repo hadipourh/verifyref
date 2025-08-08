@@ -797,35 +797,62 @@ class ReferenceClassifier:
                 reasons.append("Pattern suggests fabricated reference")
                 return ClassificationResult.FABRICATED, 0.75, reasons
         
-        # DOI VALIDATION FOR FALSE NEGATIVE REDUCTION
-        # If we have a DOI, validate it to potentially rescue low-scoring authentic papers
+        # ENHANCED DOI VALIDATION WITH METADATA MATCHING
+        # If we have a DOI, validate it and check metadata matches to prevent fraudulent DOI usage
         extracted_doi = extracted_ref.get('doi', '').strip()
         doi_validation_result = None
         if extracted_doi and self.doi_client:
-            doi_validation_result = self.doi_client.validate_doi(extracted_doi)
+            # Use enhanced metadata validation instead of simple resolution check
+            doi_validation_result = self.doi_client.validate_doi_metadata_match(
+                extracted_doi,
+                extracted_ref.get('title', ''),
+                extracted_ref.get('authors', []),
+                extracted_ref.get('year'),
+                extracted_ref.get('venue', '')
+            )
             
-            if doi_validation_result.get('valid', False):
-                # Valid DOI found - this is strong evidence of authenticity
-                reasons.append(f"✅ DOI validation: {extracted_doi} resolves successfully")
-                reasons.append(f"DOI publisher: {doi_validation_result.get('publisher', 'Unknown')}")
+            if doi_validation_result.get('metadata_valid', False):
+                # DOI resolves AND metadata matches - very strong evidence of authenticity
+                confidence_boost = doi_validation_result.get('confidence_boost', 0.1)
+                reasons.append(f"✅ DOI metadata validation: {extracted_doi} resolves with matching metadata")
+                reasons.append(f"DOI title similarity: {doi_validation_result.get('metadata_comparison', {}).get('title_similarity', 0):.2f}")
+                reasons.append(f"DOI author similarity: {doi_validation_result.get('metadata_comparison', {}).get('author_similarity', 0):.2f}")
                 
-                # If similarity is low but DOI is valid, upgrade to suspicious instead of fabricated
+                doi_metadata = doi_validation_result.get('doi_metadata', {})
+                if doi_metadata.get('publisher'):
+                    reasons.append(f"DOI publisher: {doi_metadata['publisher']}")
+                
+                # If similarity is low but DOI metadata matches, this is likely authentic with indexing gaps
                 if similarity_score < 0.4:
-                    reasons.append("Low database similarity but valid DOI suggests authentic paper with indexing gaps")
-                    return ClassificationResult.SUSPICIOUS, max(0.6, similarity_score + 0.3), reasons
+                    reasons.append("Low database similarity but verified DOI metadata suggests authentic paper with indexing gaps")
+                    boosted_score = max(0.65, similarity_score + confidence_boost)
+                    return ClassificationResult.AUTHENTIC, boosted_score, reasons + ["DOI metadata validation rescued low-scoring authentic paper"]
                 
-                # If moderate similarity with valid DOI, boost confidence significantly
+                # If moderate similarity with valid DOI metadata, boost confidence significantly
                 elif similarity_score < self.similarity_threshold:
-                    confidence_boost = 0.15  # Significant boost for valid DOI
                     boosted_score = min(0.95, similarity_score + confidence_boost)
-                    reasons.append(f"Valid DOI boosts confidence significantly (+{confidence_boost})")
+                    reasons.append(f"Valid DOI with matching metadata boosts confidence (+{confidence_boost:.2f})")
                     
                     # If boosted score now exceeds threshold, classify as authentic
                     if boosted_score >= self.similarity_threshold:
-                        return ClassificationResult.AUTHENTIC, boosted_score, reasons + ["DOI validation rescued potentially missed authentic paper"]
+                        return ClassificationResult.AUTHENTIC, boosted_score, reasons + ["DOI metadata validation rescued potentially missed authentic paper"]
+                        
+            elif doi_validation_result.get('doi_resolves', False):
+                # DOI resolves but metadata doesn't match - this is suspicious (possible fraud)
+                reasons.append(f"⚠️  DOI resolves but metadata mismatch: {extracted_doi}")
+                validation_details = doi_validation_result.get('validation_details', [])
+                for detail in validation_details[:3]:  # Show first 3 details
+                    reasons.append(f"  - {detail}")
+                reasons.append("Metadata mismatch suggests potential DOI fraud or reference error")
+                
+                # Apply slight penalty for non-matching DOI
+                confidence_penalty = abs(doi_validation_result.get('confidence_boost', -0.1))
+                similarity_score = max(0.1, similarity_score - confidence_penalty)
+                
             else:
-                # Invalid or non-resolving DOI - suspicious
-                reasons.append(f"⚠️  DOI validation failed: {extracted_doi} - {doi_validation_result.get('error', 'Unknown error')}")
+                # DOI doesn't resolve at all
+                error_msg = doi_validation_result.get('error', 'Unknown error')
+                reasons.append(f"⚠️  DOI validation failed: {extracted_doi} - {error_msg}")
                 # Don't immediately classify as fake - could be temporary resolution issue
         
         # Authentic classification using configurable threshold
@@ -868,10 +895,14 @@ class ReferenceClassifier:
                     reasons.append("Paper has DOI")
                     confidence += 0.02
             
-            # Additional DOI validation boost for authentic papers
-            if doi_validation_result and doi_validation_result.get('valid', False):
-                confidence += 0.05  # Extra confidence for validated DOI
-                reasons.append("DOI resolution confirmed - enhances authenticity confidence")
+            # Enhanced DOI metadata validation boost for authentic papers
+            if doi_validation_result and doi_validation_result.get('metadata_valid', False):
+                metadata_boost = doi_validation_result.get('confidence_boost', 0.05)
+                confidence += metadata_boost  # Dynamic boost based on metadata match quality
+                reasons.append(f"DOI metadata validation confirmed - enhances authenticity confidence (+{metadata_boost:.2f})")
+            elif doi_validation_result and doi_validation_result.get('doi_resolves', False):
+                confidence += 0.02  # Small boost for resolving DOI without metadata match
+                reasons.append("DOI resolves but metadata uncertain - minor confidence boost")
             
             return ClassificationResult.AUTHENTIC, min(0.99, confidence), reasons
         
@@ -888,14 +919,18 @@ class ReferenceClassifier:
                 reasons.append("Limited database coverage raises some concerns")
                 confidence -= self.single_database_penalty
             
-            # DOI validation can rescue suspicious papers
-            if doi_validation_result and doi_validation_result.get('valid', False):
-                confidence += 0.10  # Significant boost for validated DOI in suspicious cases
-                reasons.append("Valid DOI provides additional authenticity evidence")
+            # Enhanced DOI metadata validation can rescue suspicious papers
+            if doi_validation_result and doi_validation_result.get('metadata_valid', False):
+                metadata_boost = doi_validation_result.get('confidence_boost', 0.10)
+                confidence += metadata_boost  # Dynamic boost for suspicious papers with valid DOI metadata
+                reasons.append(f"Valid DOI with matching metadata significantly boosts confidence (+{metadata_boost:.2f})")
                 
-                # If DOI validation brings confidence high enough, upgrade to authentic
+                # If DOI metadata validation brings confidence high enough, upgrade to authentic
                 if confidence >= 0.75:
-                    return ClassificationResult.AUTHENTIC, min(0.99, confidence + 0.1), reasons + ["DOI validation upgraded suspicious paper to authentic"]
+                    return ClassificationResult.AUTHENTIC, min(0.99, confidence + 0.1), reasons + ["DOI metadata validation upgraded suspicious paper to authentic"]
+            elif doi_validation_result and doi_validation_result.get('doi_resolves', False):
+                confidence += 0.05  # Smaller boost for resolving DOI without metadata match
+                reasons.append("DOI resolves but metadata match uncertain - modest confidence boost")
                 
             return ClassificationResult.SUSPICIOUS, confidence, reasons
         
@@ -904,13 +939,29 @@ class ReferenceClassifier:
             confidence = 0.7 + self.fraud_confidence_boost
             reasons.append(f"Low similarity score ({similarity_score:.2f})")
             
-            # DOI validation can rescue low-similarity legitimate papers
-            if doi_validation_result and doi_validation_result.get('valid', False):
-                reasons.append("⚠️  Low database similarity but valid DOI suggests indexing gaps or new publication")
-                reasons.append(f"DOI {extracted_doi} resolves to {doi_validation_result.get('publisher', 'Unknown Publisher')}")
+            # Enhanced DOI metadata validation can rescue low-similarity legitimate papers
+            if doi_validation_result and doi_validation_result.get('metadata_valid', False):
+                # Strong evidence that this is legitimate despite poor database indexing
+                doi_metadata = doi_validation_result.get('doi_metadata', {})
+                reasons.append("⚠️  Low database similarity but DOI metadata validates claimed paper details")
+                reasons.append(f"DOI resolves to: {doi_metadata.get('title', 'Unknown')}")
+                reasons.append(f"DOI authors: {', '.join(doi_metadata.get('authors', []))}")
+                if doi_metadata.get('publisher'):
+                    reasons.append(f"DOI publisher: {doi_metadata['publisher']}")
                 
-                # Upgrade to suspicious instead of fabricated
-                return ClassificationResult.SUSPICIOUS, max(0.5, similarity_score + 0.2), reasons + ["Valid DOI prevents fabrication classification"]
+                # Strong upgrade to authentic for validated metadata
+                metadata_boost = doi_validation_result.get('confidence_boost', 0.15)
+                upgraded_confidence = max(0.7, similarity_score + metadata_boost)
+                return ClassificationResult.AUTHENTIC, upgraded_confidence, reasons + ["DOI metadata validation confirms authentic paper despite indexing gaps"]
+                
+            elif doi_validation_result and doi_validation_result.get('doi_resolves', False):
+                # DOI resolves but metadata doesn't match - could be reference error or fraud
+                reasons.append("⚠️  DOI resolves but metadata doesn't match claimed details")
+                validation_details = doi_validation_result.get('validation_details', [])
+                for detail in validation_details[:2]:  # Show first 2 details
+                    reasons.append(f"  - {detail}")
+                reasons.append("Upgrade to suspicious due to resolving DOI, but metadata mismatch is concerning")
+                return ClassificationResult.SUSPICIOUS, max(0.4, similarity_score + 0.1), reasons
             
             # Check if this appears to be completely made up
             if similarity_score < 0.1:
