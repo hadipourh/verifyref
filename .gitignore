@@ -79,6 +79,9 @@ test_*.py
 temp/
 tmp/
 
+# Do not ignore requirements.txt
+!requirements.txt
+
 # Documentation drafts
 *_DRAFT.md
 *_NOTES.md
