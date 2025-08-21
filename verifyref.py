@@ -417,10 +417,8 @@ def verify_references(input_path: str, output_file: str = None, output_format: s
                     console.print(f"[bold green]📖 {title_preview}[/bold green]")
                     
                     if authors_preview:
-                        if len(authors_preview) <= 3:
-                            authors_str = ", ".join(authors_preview)
-                        else:
-                            authors_str = f"{', '.join(authors_preview[:3])} et al. ({len(authors_preview)} total)"
+                        # Display all authors without truncation
+                        authors_str = ", ".join(authors_preview)
                         console.print(f"[dim]👥 {authors_str}[/dim]")
                     
                     console.print(f"[bold cyan]{sub_separator}[/bold cyan]")
@@ -517,10 +515,8 @@ def verify_references(input_path: str, output_file: str = None, output_format: s
                 console.print(f"\n[bold cyan]{i}.[/bold cyan] [bold green]{title_preview}[/bold green]")
                 
                 if authors_preview:
-                    if len(authors_preview) <= 3:
-                        authors_str = ", ".join(authors_preview)
-                    else:
-                        authors_str = f"{', '.join(authors_preview[:3])} et al. ({len(authors_preview)} total)"
+                    # Display all authors without truncation
+                    authors_str = ", ".join(authors_preview)
                     console.print(f"   👥 {authors_str}")
                 
                 # Show classification

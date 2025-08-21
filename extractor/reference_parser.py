@@ -83,7 +83,7 @@ class ReferenceParser:
                 'original_data': reference.copy(),
                 'title': self._clean_title(reference.get('title', '')),
                 'authors': self._clean_authors(reference.get('authors', [])),
-                'venue': self._clean_venue(reference.get('venue', '')),
+                'venue': self._extract_best_venue(reference),
                 'year': self._extract_year(reference),
                 'volume': self._clean_field(reference.get('volume', '')),
                 'issue': self._clean_field(reference.get('issue', '')),
@@ -122,6 +122,16 @@ class ReferenceParser:
         if not title:
             return ''
         
+        # Remove LaTeX commands and mathematical notation
+        title = re.sub(r'\$\\textnormal\\textsc\{([^}]*)\}\$', r'\1', title)  # $\textnormal\textsc{WORD}$ -> WORD
+        title = re.sub(r'\$\\textsc\{([^}]*)\}\$', r'\1', title)             # $\textsc{WORD}$ -> WORD
+        title = re.sub(r'\$\\textnormal\{([^}]*)\}\$', r'\1', title)         # $\textnormal{WORD}$ -> WORD
+        title = re.sub(r'\$\\[a-zA-Z]+\{([^}]*)\}\$', r'\1', title)          # $\textXX{WORD}$ -> WORD
+        title = re.sub(r'\$\\[a-zA-Z]+([^$]*)\$', r'\1', title)              # $\textXX...$ -> content
+        title = re.sub(r'\$([^$]*)\$', r'\1', title)                         # $...$ -> content
+        title = re.sub(r'\\[a-zA-Z]+\{([^}]*)\}', r'\1', title)              # \textsc{WORD} -> WORD
+        title = re.sub(r'\\[a-zA-Z]+', '', title)                            # Remove remaining LaTeX commands
+        
         # Remove extra whitespace and normalize while preserving hyphens
         title = normalize_text(title, preserve_hyphens=True)
         
@@ -143,16 +153,20 @@ class ReferenceParser:
             if not author:
                 continue
                 
+            # Remove LaTeX formatting from author names
+            author = re.sub(r'\$\\[a-zA-Z]+\{([^}]*)\}\$', r'\1', author)  # $\textsc{WORD}$ -> WORD
+            author = re.sub(r'\\[a-zA-Z]+\{([^}]*)\}', r'\1', author)      # \textsc{WORD} -> WORD
+            author = re.sub(r'\\[a-zA-Z]+', '', author)                    # Remove remaining LaTeX commands
+            
             # Normalize text while preserving hyphens in author names
             author = normalize_text(author, preserve_hyphens=True)
             
             # Remove common artifacts
             author = re.sub(r'[{}|<>]', '', author)
             
-            # Handle "et al." cases
+            # Handle "et al." cases - but preserve all real authors
             if 'et al' in author.lower():
-                if cleaned_authors:  # Only add if we have other authors
-                    cleaned_authors.append('et al.')
+                cleaned_authors.append('et al.')
                 break
             
             # Basic name validation
@@ -169,6 +183,33 @@ class ReferenceParser:
         # Normalize text while preserving hyphens in venue names
         venue = normalize_text(venue, preserve_hyphens=True)
         
+        # Special handling for common academic patterns
+        # If we only got "Lecture Notes in Computer Science", try to extract from raw_text
+        if venue.lower() == 'lecture notes in computer science':
+            # This is a placeholder - we need the full reference context
+            return venue
+        
+        # Prioritize conference/workshop names over series (LNCS, ACM, etc.)
+        # Extract primary venue before series information
+        venue_parts = re.split(r',\s*', venue)
+        if len(venue_parts) > 1:
+            # Check if first part looks like a conference
+            first_part = venue_parts[0].strip()
+            if any(keyword in first_part.lower() for keyword in ['conference', 'workshop', 'symposium', 'congress']):
+                venue = first_part
+            elif 'lecture notes' in venue.lower() and len(venue_parts) > 1:
+                # For LNCS, try to find actual conference name
+                for part in venue_parts:
+                    part = part.strip()
+                    # Look for conference acronyms or explicit conference names
+                    if any(keyword in part.lower() for keyword in ['sac', 'asiacrypt', 'crypto', 'eurocrypt', 'conference', 'workshop', 'symposium']):
+                        venue = part
+                        break
+                    # Check if part contains year and conference-like pattern
+                    elif re.search(r'\b(20\d{2}|19\d{2})\b', part) and len(part) > 10:
+                        venue = part
+                        break
+        
         # Remove common prefixes/suffixes
         venue = re.sub(r'^(in\s+|proceedings\s+of\s+)', '', venue, flags=re.IGNORECASE)
         venue = re.sub(r'[.,:;]+$', '', venue)
@@ -177,6 +218,59 @@ class ReferenceParser:
         venue = re.sub(r'[{}|<>]', '', venue)
         
         return venue.strip()
+    
+    def _extract_best_venue(self, reference: Dict[str, Any]) -> str:
+        """Extract the best venue name using both parsed data and raw text"""
+        # First try the parsed venue
+        parsed_venue = self._clean_venue(reference.get('venue', ''))
+        raw_text = reference.get('raw_text', '')
+        
+        # If we only got generic "Lecture Notes in Computer Science" or similar, 
+        # try to extract conference name from raw text
+        generic_venues = ['lecture notes in computer science', 'proceedings', 'acm', 'ieee', 'springer']
+        
+        if (parsed_venue.lower() in generic_venues or 
+            any(generic in parsed_venue.lower() for generic in generic_venues)) and raw_text:
+            
+            # Try to extract conference name from raw text
+            extracted_venue = self._extract_venue_from_raw_text(raw_text)
+            if extracted_venue:  # Prefer extracted venue over generic ones
+                return extracted_venue
+        
+        return parsed_venue
+    
+    def _extract_venue_from_raw_text(self, raw_text: str) -> str:
+        """Extract venue/conference name from raw reference text"""
+        if not raw_text:
+            return ''
+        
+        # Common patterns for conference/journal names in references
+        venue_patterns = [
+            # "In: Conference Name, Year" pattern
+            r'In:\s*([^,]+(?:Conference|Workshop|Symposium|Congress)[^,]*)',
+            # "Selected Areas in Cryptography" specific pattern  
+            r'Selected\s+Areas\s+in\s+Cryptography[^,]*',
+            # "Conference Name, Year" pattern
+            r'([A-Z][^,]*(?:Conference|Workshop|Symposium|Congress)[^,]*),\s*\d{4}',
+            # Acronym followed by year: "SAC 2012", "CRYPTO 2020", etc.
+            r'\b([A-Z]{3,8})\s+(19|20)\d{2}\b',
+            # "Advances in Cryptology - CRYPTO" pattern
+            r'Advances\s+in\s+Cryptology\s*[-–—]\s*[A-Z]+',
+            # Journal patterns
+            r'Journal\s+of\s+[^,]+',
+            r'IEEE\s+[^,]+',
+            r'ACM\s+[^,]+',
+        ]
+        
+        for pattern in venue_patterns:
+            matches = re.findall(pattern, raw_text, re.IGNORECASE)
+            if matches:
+                venue = matches[0] if isinstance(matches[0], str) else matches[0][0]
+                venue = venue.strip()
+                if len(venue) > 3:  # Reasonable venue name length
+                    return venue
+        
+        return ''
     
     def _extract_year(self, reference: Dict[str, Any]) -> Optional[int]:
         """Extract and validate publication year"""

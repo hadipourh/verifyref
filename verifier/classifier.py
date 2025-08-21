@@ -277,10 +277,41 @@ class ReferenceClassifier:
         
         return overall_similarity
     
+    def _normalize_latex_text(self, text: str) -> str:
+        """Normalize LaTeX formatting in text for better comparison"""
+        import re
+        
+        if not text:
+            return ''
+        
+        # Remove LaTeX commands and mathematical notation
+        text = re.sub(r'\$\\textnormal\{\\textsc\{([^}]*)\}\}\$', r'\1', text)  # $\textnormal{\textsc{WORD}}$ -> WORD
+        text = re.sub(r'\$\\textnormal\\textsc\{([^}]*)\}\$', r'\1', text)     # $\textnormal\textsc{WORD}$ -> WORD
+        text = re.sub(r'\$\\textsc\{([^}]*)\}\$', r'\1', text)                # $\textsc{WORD}$ -> WORD
+        text = re.sub(r'\$\\textnormal\{([^}]*)\}\$', r'\1', text)            # $\textnormal{WORD}$ -> WORD
+        text = re.sub(r'\$\\[a-zA-Z]+\{([^}]*)\}\$', r'\1', text)             # $\textXX{WORD}$ -> WORD
+        text = re.sub(r'\$\\[a-zA-Z]+([^$]*)\$', r'\1', text)                 # $\textXX...$ -> content
+        text = re.sub(r'\$([^$]*)\$', r'\1', text)                            # $...$ -> content
+        text = re.sub(r'\\[a-zA-Z]+\{([^}]*)\}', r'\1', text)                 # \textsc{WORD} -> WORD
+        text = re.sub(r'\\[a-zA-Z]+', '', text)                               # Remove remaining LaTeX commands
+        
+        # Clean up extra whitespace
+        text = re.sub(r'\s+', ' ', text).strip()
+        
+        return text
+
     def _calculate_title_similarity(self, extracted_ref: Dict[str, Any], paper: Dict[str, Any]) -> float:
         """Calculate title similarity between reference and paper"""
-        ref_title = normalize_text(extracted_ref.get('title', ''), preserve_hyphens=True)
-        paper_title = normalize_text(paper.get('title', ''), preserve_hyphens=True)
+        ref_title = extracted_ref.get('title', '')
+        paper_title = paper.get('title', '')
+        
+        # Normalize LaTeX formatting before text normalization
+        ref_title = self._normalize_latex_text(ref_title)
+        paper_title = self._normalize_latex_text(paper_title)
+        
+        # Apply standard text normalization
+        ref_title = normalize_text(ref_title, preserve_hyphens=True)
+        paper_title = normalize_text(paper_title, preserve_hyphens=True)
         
         if not ref_title or not paper_title:
             return 0.0
