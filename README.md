@@ -225,7 +225,7 @@ SPRINGER_API_KEY = "your-key-here"  # ← Optional
 
 **Free Databases (No API Key Required):**
 - OpenAlex, DBLP, IACR, ArXiv - Work out of the box
-- Google Scholar - Free but rate-limited with smart fallback strategy
+- Google Scholar - Free but rate-limited with smart fallback strategy (maybe use serpapi?)
 
 **Enhanced with API Keys (Optional):**
 - **Semantic Scholar API Key**: [Get it here](https://www.semanticscholar.org/product/api#api-key-form) - Higher rate limits
