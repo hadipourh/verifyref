@@ -44,7 +44,7 @@ SEMANTIC_SCHOLAR_API_KEY = ""  # ← Add your key here
 
 # OpenAI API Key (only needed for AI-powered fraud detection)
 # Get it from: https://platform.openai.com/api-keys
-OPENAI_API_KEY = "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"  # ← Add your key here
+OPENAI_API_KEY = ""  # ← Add your key here
 
 # AI Model Selection (choose which OpenAI model to use for verification)
 # Available options: "gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"
