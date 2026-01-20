@@ -1,5 +1,5 @@
 """
-RefifyRef - High-performance academic reference verification tool
+VerifyRef - High-performance academic reference verification tool
 Copyright (C) 2025 Hosein Hadipour <hsn.hadipour@gmail.com>
 
 This program is free software: you can redistribute it and/or modify

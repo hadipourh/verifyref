@@ -112,8 +112,9 @@ source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 # Install dependencies
 pip install -r requirements.txt
 
-# Configure databases and API keys
-# Edit config.py: Set ENABLE_CROSSREF=True, ENABLE_GOOGLE_SCHOLAR=True, and CROSSREF_EMAIL
+# Configure your environment
+cp .env.example .env
+# Edit .env: Set CROSSREF_EMAIL and optionally OPENAI_API_KEY
 
 # Start GROBID (for PDF processing)
 docker run -d -p 8070:8070 lfoppiano/grobid:0.8.2

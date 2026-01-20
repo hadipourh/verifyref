@@ -44,7 +44,8 @@ SEMANTIC_SCHOLAR_API_KEY = ""  # ← Add your key here
 
 # OpenAI API Key (only needed for AI-powered fraud detection)
 # Get it from: https://platform.openai.com/api-keys
-OPENAI_API_KEY = ""  # ← Add your key here
+# Set via environment variable or .env file for security
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")  # ← Set in .env file or environment
 
 # AI Model Selection (choose which OpenAI model to use for verification)
 # Available options: "gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"
