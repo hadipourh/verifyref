@@ -286,7 +286,7 @@ class SemanticScholarClient:
         Returns:
             Response object or None if failed
         """
-        max_rate_limit_retries = 5  # Separate limit for rate limiting
+        max_rate_limit_retries = 2  # Reduced retries for faster response
         rate_limit_retries = 0
         attempt = 0
         
@@ -301,14 +301,15 @@ class SemanticScholarClient:
                 # Handle rate limiting with separate retry counter
                 if response.status_code == 429:
                     if rate_limit_retries < max_rate_limit_retries:
-                        retry_after = int(response.headers.get('Retry-After', self.rate_limit_delay * 2))
+                        # Use shorter wait time (3s instead of 10s) for faster iteration
+                        retry_after = min(int(response.headers.get('Retry-After', 3)), 5)
                         logger.warning(f"Rate limited, waiting {retry_after} seconds (rate limit retry {rate_limit_retries + 1}/{max_rate_limit_retries})")
                         time.sleep(retry_after)
                         rate_limit_retries += 1
                         # Don't increment attempt counter for rate limits
                         continue
                     else:
-                        logger.warning(f"Exceeded maximum rate limit retries ({max_rate_limit_retries})")
+                        logger.warning(f"Exceeded maximum rate limit retries ({max_rate_limit_retries}), skipping Semantic Scholar")
                         return response  # Return 429 response so caller can handle it
                 
                 # Return response for any other status code

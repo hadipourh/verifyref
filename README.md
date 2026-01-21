@@ -1,5 +1,9 @@
 # VerifyRef
 
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+
 A tool for verifying the authenticity of academic references in PDF documents using multiple academic databases and optional AI-powered analysis.
 
 ## Why VerifyRef?

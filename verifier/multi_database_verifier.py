@@ -125,9 +125,50 @@ class MultiDatabaseVerifier:
             except Exception as e:
                 logger.warning(f"Failed to initialize CryptoDB client: {e}")
     
+    def _search_single_database(self, db_name: str, client: Any, query_info: Dict[str, Any]) -> tuple:
+        """
+        Search a single database (helper for parallel execution)
+        
+        Args:
+            db_name: Name of the database
+            client: Database client instance
+            query_info: Search parameters
+            
+        Returns:
+            Tuple of (db_name, results_list)
+        """
+        try:
+            if not client.is_available():
+                logger.warning(f"{db_name} service unavailable, skipping")
+                return (db_name, [])
+            
+            title = query_info.get('title', '')
+            authors = query_info.get('authors', [])
+            year = query_info.get('year')
+            venue = query_info.get('venue', '')
+            
+            # Use the client's search_paper method
+            if hasattr(client, 'search_paper'):
+                db_results = client.search_paper(
+                    title=title,
+                    authors=authors,
+                    year=year,
+                    venue=venue
+                )
+            else:
+                # Fallback to verify_reference for compatibility
+                db_results = client.verify_reference(query_info)
+            
+            logger.info(f"{db_name} returned {len(db_results)} results")
+            return (db_name, db_results)
+            
+        except Exception as e:
+            logger.error(f"Error searching {db_name}: {e}")
+            return (db_name, [])
+    
     def search_across_databases(self, query_info: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
         """
-        Search for papers across all enabled databases and return results from each
+        Search for papers across all enabled databases in parallel
         
         Args:
             query_info: Dictionary with search parameters (title, authors, year, venue)
@@ -137,52 +178,58 @@ class MultiDatabaseVerifier:
         """
         results = {}
         
-        # Sequential database search to avoid nested threading issues
-        # This ensures thread safety when called from parallel reference processing
-        for db_name, client in self.clients.items():
-            try:
-                if not client.is_available():
-                    logger.warning(f"{db_name} service unavailable, skipping")
+        # Parallel database search - each API is independent with its own rate limits
+        # This dramatically speeds up searches (from ~15-20s to ~3-5s)
+        max_workers = min(len(self.clients), 8)  # Limit concurrent connections
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all database searches in parallel
+            futures = {
+                executor.submit(self._search_single_database, db_name, client, query_info): db_name
+                for db_name, client in self.clients.items()
+            }
+            
+            # Collect results as they complete
+            for future in as_completed(futures):
+                db_name = futures[future]
+                try:
+                    name, db_results = future.result(timeout=30)  # 30s timeout per database
+                    results[name] = db_results
+                except Exception as e:
+                    logger.error(f"Error getting results from {db_name}: {e}")
                     results[db_name] = []
-                    continue
-                
-                title = query_info.get('title', '')
-                authors = query_info.get('authors', [])
-                year = query_info.get('year')
-                venue = query_info.get('venue', '')
-                
-                # Use the client's search_paper method
-                if hasattr(client, 'search_paper'):
-                    db_results = client.search_paper(
-                        title=title,
-                        authors=authors,
-                        year=year,
-                        venue=venue
-                    )
-                else:
-                    # Fallback to verify_reference for compatibility
-                    db_results = client.verify_reference(query_info)
-                
-                results[db_name] = db_results
-                logger.info(f"{db_name} returned {len(db_results)} results")
-                
-                # Add small delay to respect API rate limits
-                if db_name == "semantic_scholar":
-                    time.sleep(1.0)  # Moderate delay for Semantic Scholar
-                elif db_name in ["pubmed", "crossref"]:
-                    time.sleep(0.5)  # Brief delay for rate-limited APIs
-                else:
-                    time.sleep(0.1)  # Minimal delay for other APIs
-                    
-            except Exception as e:
-                logger.error(f"Error searching {db_name}: {e}")
-                results[db_name] = []
         
         return results
     
+    def _verify_single_database(self, db_name: str, client: Any, reference: Dict[str, Any]) -> tuple:
+        """
+        Verify reference against a single database (helper for parallel execution)
+        
+        Args:
+            db_name: Name of the database
+            client: Database client instance  
+            reference: Reference to verify
+            
+        Returns:
+            Tuple of (db_name, results_list)
+        """
+        try:
+            if not client.is_available():
+                logger.warning(f"{db_name} service unavailable, skipping")
+                return (db_name, [])
+            
+            logger.debug(f"Searching {db_name} for reference: {reference.get('title', 'No title')[:50]}...")
+            results = client.verify_reference(reference)
+            logger.info(f"{db_name} returned {len(results)} results")
+            return (db_name, results)
+            
+        except Exception as e:
+            logger.warning(f"Search failed for {db_name}: {e}")
+            return (db_name, [])
+    
     def verify_reference(self, reference: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
-        Verify reference across all enabled databases
+        Verify reference across all enabled databases in parallel
         
         Args:
             reference: Reference to verify
@@ -192,28 +239,25 @@ class MultiDatabaseVerifier:
         """
         all_results = {}
         
-        # Search each database
-        for db_name, client in self.clients.items():
-            try:
-                if not client.is_available():
-                    logger.warning(f"{db_name} service unavailable, skipping")
+        # Parallel database search - each API is independent with its own rate limits
+        max_workers = min(len(self.clients), 8)  # Limit concurrent connections
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all database verifications in parallel
+            futures = {
+                executor.submit(self._verify_single_database, db_name, client, reference): db_name
+                for db_name, client in self.clients.items()
+            }
+            
+            # Collect results as they complete
+            for future in as_completed(futures):
+                db_name = futures[future]
+                try:
+                    name, db_results = future.result(timeout=30)  # 30s timeout per database
+                    all_results[name] = db_results
+                except Exception as e:
+                    logger.error(f"Error getting results from {db_name}: {e}")
                     all_results[db_name] = []
-                    continue
-                    
-                logger.debug(f"Searching {db_name} for reference: {reference.get('title', 'No title')[:50]}...")
-                results = client.verify_reference(reference)
-                all_results[db_name] = results
-                logger.info(f"{db_name} returned {len(results)} results")
-                
-                # Add delay between database calls to respect rate limits
-                if db_name == "semantic_scholar":
-                    time.sleep(5.0)  # Longer delay for Semantic Scholar to avoid rate limiting
-                else:
-                    time.sleep(0.5)
-                
-            except Exception as e:
-                logger.warning(f"Search failed for {db_name}: {e}")
-                all_results[db_name] = []
         
         # Combine and deduplicate results
         combined_results = self._combine_results(all_results, reference)

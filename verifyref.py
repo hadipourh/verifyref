@@ -967,6 +967,66 @@ def search_and_cite(query: str, context: str = "general", output_file: str = Non
             console.print("[red]Error traceback:[/red]")
             console.print(traceback.format_exc())
 
+def _normalize_publisher(publisher: str) -> str:
+    """
+    Normalize publisher names to clean, standard formats for BibTeX.
+    
+    Removes corporate suffixes and standardizes common publisher names.
+    """
+    if not publisher:
+        return publisher
+    
+    # Common publisher normalizations (corporate name -> clean name)
+    publisher_mappings = {
+        'springer science+business media': 'Springer',
+        'springer science + business media': 'Springer',
+        'springer-verlag': 'Springer',
+        'springer nature': 'Springer',
+        'springer nature singapore': 'Springer',
+        'springer berlin heidelberg': 'Springer',
+        'springer international publishing': 'Springer',
+        'association for computing machinery': 'ACM',
+        'institute of electrical and electronics engineers': 'IEEE',
+        'ieee computer society': 'IEEE',
+        'elsevier b.v.': 'Elsevier',
+        'elsevier bv': 'Elsevier',
+        'elsevier ltd': 'Elsevier',
+        'wiley-blackwell': 'Wiley',
+        'john wiley & sons': 'Wiley',
+        'oxford university press (oup)': 'Oxford University Press',
+        'cambridge university press (cup)': 'Cambridge University Press',
+        'american chemical society (acs)': 'American Chemical Society',
+        'royal society of chemistry (rsc)': 'Royal Society of Chemistry',
+        'taylor & francis': 'Taylor & Francis',
+        'informa uk limited': 'Taylor & Francis',
+    }
+    
+    # Check for exact match (case-insensitive)
+    publisher_lower = publisher.lower().strip()
+    if publisher_lower in publisher_mappings:
+        return publisher_mappings[publisher_lower]
+    
+    # Check for partial matches
+    for pattern, normalized in publisher_mappings.items():
+        if pattern in publisher_lower:
+            return normalized
+    
+    # Remove common corporate suffixes
+    suffixes_to_remove = [
+        ', inc.', ', inc', ' inc.', ' inc',
+        ', ltd.', ', ltd', ' ltd.', ' ltd',
+        ', llc', ' llc',
+        ' gmbh', ' ag', ' b.v.', ' bv',
+        ' (oup)', ' (cup)', ' (acs)', ' (rsc)',
+    ]
+    
+    result = publisher
+    for suffix in suffixes_to_remove:
+        if result.lower().endswith(suffix):
+            result = result[:-len(suffix)]
+    
+    return result.strip()
+
 def generate_bibtex(paper: dict, key: str) -> str:
     """Generate comprehensive BibTeX entry for a paper with optimized string handling"""
     # Extract all fields once
@@ -982,15 +1042,26 @@ def generate_bibtex(paper: dict, key: str) -> str:
     publisher = paper.get('publisher', '')
     editor = paper.get('editor', '') or paper.get('editors', [])
     
+    # Normalize publisher name (remove corporate suffixes)
+    if publisher:
+        publisher = _normalize_publisher(publisher)
+    
     # Determine entry type efficiently - handle venue being a list
     if isinstance(venue, list):
         venue_lower = ' '.join(str(v) for v in venue).lower() if venue else ''
     else:
         venue_lower = str(venue).lower() if venue else ''
         
-    if any(word in venue_lower for word in ['conference', 'proceedings', 'workshop', 'symposium']):
+    # Check for proceedings indicators (including "lecture notes" series)
+    proceedings_indicators = [
+        'conference', 'proceedings', 'workshop', 'symposium',
+        'lecture notes', 'lncs', 'lnai',  # Springer LNCS/LNAI series
+        'advances in cryptology',  # Crypto/Eurocrypt/Asiacrypt
+        'acm ccs', 'ieee s&p', 'usenix'  # Security conferences
+    ]
+    if any(word in venue_lower for word in proceedings_indicators):
         entry_type = "inproceedings"
-    elif any(word in venue_lower for word in ['arxiv', 'preprint']):
+    elif any(word in venue_lower for word in ['arxiv', 'preprint', 'eprint', 'iacr']):
         entry_type = "misc"
     else:
         entry_type = "article"
