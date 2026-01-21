@@ -67,24 +67,88 @@ def apply_runtime_config(args):
         DATABASE_CONFIG['ai_verification']['enabled'] = ai_enabled
     
     if ai_enabled:
-        # Validate API key if AI is enabled - check environment first, then config.py
-        api_key = os.getenv('OPENAI_API_KEY')
-        if not api_key:
-            # Try to get API key from config.py
-            try:
-                from config import OPENAI_API_KEY
-                api_key = OPENAI_API_KEY
-            except ImportError:
-                pass
+        # Get the AI provider (default to gemini which is free)
+        provider = os.getenv('AI_PROVIDER', 'gemini')
+        DATABASE_CONFIG['ai_verification']['provider'] = provider
+        
+        # Check for API key based on provider
+        api_key = None
+        provider_name = ""
+        
+        if provider == "gemini":
+            api_key = os.getenv('GOOGLE_GEMINI_API_KEY')
+            if not api_key:
+                try:
+                    from config import GOOGLE_GEMINI_API_KEY
+                    api_key = GOOGLE_GEMINI_API_KEY
+                except (ImportError, AttributeError):
+                    pass
+            provider_name = "Google Gemini (FREE)"
+            key_env_var = "GOOGLE_GEMINI_API_KEY"
+            key_url = "https://aistudio.google.com/app/apikey"
+            
+        elif provider == "groq":
+            api_key = os.getenv('GROQ_API_KEY')
+            if not api_key:
+                try:
+                    from config import GROQ_API_KEY
+                    api_key = GROQ_API_KEY
+                except (ImportError, AttributeError):
+                    pass
+            provider_name = "Groq (FREE)"
+            key_env_var = "GROQ_API_KEY"
+            key_url = "https://console.groq.com/keys"
+            # Set appropriate model for Groq
+            groq_model = os.getenv('AI_MODEL', 'llama-3.3-70b-versatile')
+            DATABASE_CONFIG['ai_verification']['model'] = groq_model
+            
+        elif provider == "ollama":
+            # Ollama doesn't need an API key, just check if server is running
+            api_key = "local"  # Placeholder - Ollama runs locally
+            provider_name = "Ollama (FREE, local)"
+            key_env_var = None
+            key_url = "https://ollama.ai"
+            # Set appropriate model for Ollama (not Gemini model)
+            ollama_model = os.getenv('AI_MODEL', 'llama3.2')
+            DATABASE_CONFIG['ai_verification']['model'] = ollama_model
+            
+        elif provider == "openai":
+            api_key = os.getenv('OPENAI_API_KEY')
+            if not api_key:
+                try:
+                    from config import OPENAI_API_KEY
+                    api_key = OPENAI_API_KEY
+                except (ImportError, AttributeError):
+                    pass
+            provider_name = "OpenAI (PAID)"
+            key_env_var = "OPENAI_API_KEY"
+            key_url = "https://platform.openai.com/api-keys"
+            
+            # Validate OpenAI key format
+            if api_key and not validate_openai_api_key(api_key):
+                raise ValueError("Invalid OpenAI API key format. Please check your OPENAI_API_KEY.")
+        
+        else:
+            raise ValueError(f"Unknown AI provider: {provider}. Supported: gemini, groq, ollama, openai")
         
         if not api_key:
-            raise ValueError("OpenAI API key required for AI verification. Set OPENAI_API_KEY environment variable or configure it in config.py.")
+            error_msg = f"{provider_name} API key required for AI verification.\n"
+            if key_env_var:
+                error_msg += f"Set {key_env_var} environment variable or configure it in config.py.\n"
+                error_msg += f"Get a FREE key at: {key_url}"
+            else:
+                error_msg += f"Install and start Ollama: {key_url}"
+            raise ValueError(error_msg)
         
-        if not validate_openai_api_key(api_key):
-            raise ValueError("Invalid OpenAI API key format. Please check your OPENAI_API_KEY environment variable or config.py setting.")
+        # Store the API key in config
+        if provider == "gemini":
+            DATABASE_CONFIG['ai_verification']['google_gemini_api_key'] = api_key
+        elif provider == "groq":
+            DATABASE_CONFIG['ai_verification']['groq_api_key'] = api_key
+        elif provider == "openai":
+            DATABASE_CONFIG['ai_verification']['openai_api_key'] = api_key
         
-        DATABASE_CONFIG['ai_verification']['openai_api_key'] = api_key
-        logger.info("AI verification enabled with OpenAI API")
+        logger.info(f"AI verification enabled with {provider_name}")
     else:
         logger.info("AI verification disabled (default)")
 

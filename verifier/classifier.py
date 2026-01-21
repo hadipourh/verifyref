@@ -18,6 +18,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 
 import logging
+import re
 from typing import Dict, List, Any, Tuple, Optional
 from dataclasses import dataclass
 from enum import Enum
@@ -47,6 +48,7 @@ class VerificationResult:
     matched_paper: Optional[Dict[str, Any]]
     reasons: List[str]
     details: Dict[str, Any]
+    issue_summary: str = ""  # Brief description of the issue for reviewers
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert VerificationResult to JSON-serializable dictionary"""
@@ -56,7 +58,8 @@ class VerificationResult:
             'similarity_score': self.similarity_score,
             'matched_paper': self.matched_paper,
             'reasons': self.reasons,
-            'details': self.details
+            'details': self.details,
+            'issue_summary': self.issue_summary
         }
 
 class ReferenceClassifier:
@@ -168,18 +171,45 @@ class ReferenceClassifier:
             VerificationResult containing classification and details
         """
         if not search_results:
+            # Check if this might be a book (not well indexed in academic databases)
+            book_indicators = self._detect_book_reference(extracted_ref)
+            if book_indicators['is_likely_book']:
+                # Try AI verification for books too
+                ai_verification = self._get_ai_verification(extracted_ref, search_results)
+                return VerificationResult(
+                    classification=ClassificationResult.INCONCLUSIVE,
+                    confidence=0.4,  # Low confidence - we can't verify books in academic DBs
+                    similarity_score=0.0,
+                    matched_paper=None,
+                    reasons=[
+                        "Reference appears to be a book or textbook",
+                        "Books are not well-indexed in academic paper databases",
+                        f"Book indicators found: {', '.join(book_indicators['indicators'])}",
+                        "Recommend verifying via Google Books, WorldCat, or publisher website"
+                    ],
+                    details={"search_attempted": True, "results_count": 0, "reference_type": "book", "book_indicators": book_indicators['indicators'], "ai_verification": ai_verification.to_dict() if ai_verification else None},
+                    issue_summary=f"BOOK REFERENCE: This appears to be a book ({', '.join(book_indicators['indicators'][:2])}). Books are not indexed in academic paper databases. Verify via Google Books or the publisher."
+                )
+            
+            # Try AI verification even with no database results
+            ai_verification = self._get_ai_verification(extracted_ref, search_results)
             return VerificationResult(
                 classification=ClassificationResult.FABRICATED,  # Changed: No results = likely fabricated
                 confidence=0.8,  # High confidence in fabrication if no DB has it
                 similarity_score=0.0,
                 matched_paper=None,
                 reasons=["Reference not found in any academic database - likely fabricated"],
-                details={"search_attempted": True, "results_count": 0, "fraud_type": "fabricated"}
+                details={"search_attempted": True, "results_count": 0, "fraud_type": "fabricated", "ai_verification": ai_verification.to_dict() if ai_verification else None},
+                issue_summary="NOT FOUND: This reference was not found in any academic database. It may be fabricated, misspelled, or from a non-indexed venue."
             )
         
         # Enhanced fraud detection
         fraud_result = self._detect_fraud(extracted_ref, search_results)
         if fraud_result:
+            # Add AI verification to fraud results
+            ai_verification = self._get_ai_verification(extracted_ref, search_results)
+            if ai_verification:
+                fraud_result.details['ai_verification'] = ai_verification.to_dict()
             return fraud_result
         
         # Find the best match among search results
@@ -188,7 +218,49 @@ class ReferenceClassifier:
         # Enhanced multi-database validation
         validation_result = self._validate_across_databases(extracted_ref, search_results, best_match, best_score)
         if validation_result:
+            # Add AI verification to validation results
+            ai_verification = self._get_ai_verification(extracted_ref, search_results)
+            if ai_verification:
+                validation_result.details['ai_verification'] = ai_verification.to_dict()
             return validation_result
+        
+        # CRITICAL: Check for author mismatch before standard classification
+        # This catches cases where title matches well but authors are completely different
+        if best_match:
+            title_sim = self._calculate_title_similarity(extracted_ref, best_match)
+            author_sim = self._calculate_author_similarity(extracted_ref, best_match)
+            
+            # High title similarity (>0.7) but very low author similarity (<0.4) = author manipulation
+            if title_sim > 0.7 and author_sim < 0.4:
+                ref_authors = extracted_ref.get('authors', [])
+                db_authors = best_match.get('authors', [])
+                # Convert db_authors to strings if they're dicts
+                db_author_names = [a.get('name', str(a)) if isinstance(a, dict) else str(a) for a in db_authors]
+                
+                # Add AI verification to author manipulation results
+                ai_verification = self._get_ai_verification(extracted_ref, search_results)
+                
+                return VerificationResult(
+                    classification=ClassificationResult.AUTHOR_MANIPULATION,
+                    confidence=0.85,
+                    similarity_score=best_score,
+                    matched_paper=best_match,
+                    reasons=[
+                        f"Title matches well ({title_sim:.0%}) but authors differ significantly ({author_sim:.0%})",
+                        "This is a strong indicator of author manipulation fraud",
+                        f"Reference claims: {', '.join(ref_authors[:3])}",
+                        f"Database shows: {', '.join(db_author_names[:3])}"
+                    ],
+                    details={
+                        "fraud_type": "author_manipulation",
+                        "title_similarity": title_sim,
+                        "author_similarity": author_sim,
+                        "claimed_authors": ref_authors,
+                        "actual_authors": db_author_names,
+                        "ai_verification": ai_verification.to_dict() if ai_verification else None
+                    },
+                    issue_summary=f"AUTHOR MISMATCH: Title matches but authors differ. Reference claims [{', '.join(ref_authors[:3])}], database shows [{', '.join(db_author_names[:3])}]."
+                )
         
         # Standard classification with stricter requirements
         classification, confidence, reasons = self._determine_enhanced_classification(
@@ -210,6 +282,11 @@ class ReferenceClassifier:
             except Exception as e:
                 logger.warning(f"AI verification failed: {e}")
         
+        # Generate issue summary for reviewers
+        issue_summary = self._generate_issue_summary(
+            classification, confidence, best_score, best_match, extracted_ref, search_results
+        )
+        
         return VerificationResult(
             classification=classification,
             confidence=confidence,
@@ -222,8 +299,9 @@ class ReferenceClassifier:
                 "best_match_index": search_results.index(best_match) if best_match in search_results else -1,
                 "similarity_breakdown": self._get_similarity_breakdown(extracted_ref, best_match) if best_match else {},
                 "databases_searched": len(set(r.get('source', 'unknown') for r in search_results)),
-                "ai_verification": ai_verification.metadata if ai_verification else None
-            }
+                "ai_verification": ai_verification.to_dict() if ai_verification else None
+            },
+            issue_summary=issue_summary
         )
     
     def _find_best_match(self, 
@@ -299,24 +377,95 @@ class ReferenceClassifier:
         text = re.sub(r'\s+', ' ', text).strip()
         
         return text
-
-    def _calculate_title_similarity(self, extracted_ref: Dict[str, Any], paper: Dict[str, Any]) -> float:
-        """Calculate title similarity between reference and paper"""
-        ref_title = extracted_ref.get('title', '')
-        paper_title = paper.get('title', '')
+    
+    def _normalize_title_for_matching(self, title: str) -> str:
+        """
+        Aggressively normalize title for fuzzy matching to reduce false negatives.
         
-        # Normalize LaTeX formatting before text normalization
-        ref_title = self._normalize_latex_text(ref_title)
-        paper_title = self._normalize_latex_text(paper_title)
+        Handles:
+        - Special characters like + in SPHINCS+
+        - Spacing variations: "SPHINCS +" vs "SPHINCS+"
+        - Case normalization
+        - Common abbreviation expansions
+        
+        Args:
+            title: Title string to normalize
+            
+        Returns:
+            Normalized title for matching
+        """
+        if not title:
+            return ''
+        
+        # Apply LaTeX normalization first
+        title = self._normalize_latex_text(title)
         
         # Apply standard text normalization
-        ref_title = normalize_text(ref_title, preserve_hyphens=True)
-        paper_title = normalize_text(paper_title, preserve_hyphens=True)
+        title = normalize_text(title, preserve_hyphens=True)
+        
+        # Lowercase for comparison
+        title = title.lower()
+        
+        # Remove extra spaces around special characters
+        # "sphincs +" -> "sphincs+"
+        title = re.sub(r'\s*\+\s*', '+', title)
+        title = re.sub(r'\s*\*\s*', '*', title)
+        title = re.sub(r'\s*#\s*', '#', title)
+        
+        # Remove spaces around colons in titles
+        title = re.sub(r'\s*:\s*', ': ', title)
+        
+        # Normalize common variations
+        title = re.sub(r'\bpost-quantum\b', 'post quantum', title)
+        title = re.sub(r'\bpost quantum\b', 'postquantum', title)
+        
+        # Remove leading "the " for better matching
+        title = re.sub(r'^the\s+', '', title)
+        
+        # Remove trailing punctuation
+        title = re.sub(r'[.,:;!?]+$', '', title)
+        
+        return title.strip()
+
+    def _calculate_title_similarity(self, extracted_ref: Dict[str, Any], paper: Dict[str, Any]) -> float:
+        """
+        Calculate title similarity between reference and paper.
+        
+        Uses multiple normalization strategies and returns the best score
+        to reduce false negatives from minor formatting differences.
+        """
+        ref_title = extracted_ref.get('title', '')
+        paper_title = paper.get('title', '')
         
         if not ref_title or not paper_title:
             return 0.0
         
-        return calculate_text_similarity(ref_title, paper_title)
+        # Strategy 1: Standard normalization
+        ref_title_std = self._normalize_latex_text(ref_title)
+        paper_title_std = self._normalize_latex_text(paper_title)
+        ref_title_std = normalize_text(ref_title_std, preserve_hyphens=True)
+        paper_title_std = normalize_text(paper_title_std, preserve_hyphens=True)
+        score_standard = calculate_text_similarity(ref_title_std, paper_title_std)
+        
+        # Strategy 2: Aggressive normalization (for handling SPHINCS+ type cases)
+        ref_title_agg = self._normalize_title_for_matching(ref_title)
+        paper_title_agg = self._normalize_title_for_matching(paper_title)
+        score_aggressive = calculate_text_similarity(ref_title_agg, paper_title_agg)
+        
+        # Strategy 3: Word-based comparison (ignores word order issues)
+        ref_words = set(ref_title_agg.split())
+        paper_words = set(paper_title_agg.split())
+        if ref_words and paper_words:
+            intersection = ref_words & paper_words
+            union = ref_words | paper_words
+            score_jaccard = len(intersection) / len(union) if union else 0.0
+        else:
+            score_jaccard = 0.0
+        
+        # Return the best score from all strategies
+        best_score = max(score_standard, score_aggressive, score_jaccard)
+        
+        return best_score
     
     def _calculate_author_similarity(self, extracted_ref: Dict[str, Any], paper: Dict[str, Any]) -> float:
         """
@@ -527,6 +676,67 @@ class ReferenceClassifier:
             'year_similarity': self._calculate_year_similarity(extracted_ref, paper)
         }
     
+    def _generate_issue_summary(self, 
+                               classification: ClassificationResult,
+                               confidence: float,
+                               similarity_score: float,
+                               best_match: Optional[Dict[str, Any]],
+                               extracted_ref: Dict[str, Any],
+                               search_results: List[Dict[str, Any]]) -> str:
+        """
+        Generate a clear, concise issue summary for reviewers.
+        
+        This provides a human-readable explanation of what's wrong (or right)
+        with the reference, making it easy for reviewers to understand the issue.
+        """
+        ref_title = extracted_ref.get('title', 'Unknown title')[:60]
+        ref_authors = extracted_ref.get('authors', [])
+        
+        if classification == ClassificationResult.AUTHENTIC:
+            # Verified reference - provide positive confirmation
+            sources = list(set(r.get('source', 'database') for r in search_results if r))
+            return f"VERIFIED: Reference confirmed in {', '.join(sources[:3])}. Title, authors, and metadata match."
+        
+        elif classification == ClassificationResult.FABRICATED:
+            return f"NOT FOUND: This reference was not found in any academic database. It may be fabricated, misspelled, or from a non-indexed venue."
+        
+        elif classification == ClassificationResult.AUTHOR_MANIPULATION:
+            # Show specific author mismatch
+            if best_match:
+                db_authors = best_match.get('authors', [])
+                db_authors_str = ', '.join(db_authors[:3]) if db_authors else 'Unknown'
+                ref_authors_str = ', '.join(ref_authors[:3]) if ref_authors else 'Unknown'
+                return f"AUTHOR MISMATCH: Title matches but authors differ. Reference lists [{ref_authors_str}], database shows [{db_authors_str}]."
+            return "AUTHOR MISMATCH: Title found but authors do not match the database record."
+        
+        elif classification == ClassificationResult.FAKE:
+            if similarity_score > 0.3:
+                return f"METADATA MISMATCH: Similar paper found but significant discrepancies in title, authors, or venue (similarity: {similarity_score*100:.0f}%)."
+            return "LIKELY FAKE: Very low similarity to any known papers. Reference may be completely fabricated."
+        
+        elif classification == ClassificationResult.SUSPICIOUS:
+            issues = []
+            if best_match:
+                # Check what specifically doesn't match well
+                title_sim = self._calculate_title_similarity(extracted_ref, best_match)
+                author_sim = self._calculate_author_similarity(extracted_ref, best_match)
+                
+                if title_sim < 0.8:
+                    issues.append("title has differences")
+                if author_sim < 0.7:
+                    issues.append("author list differs")
+                if not best_match.get('doi') and not best_match.get('url'):
+                    issues.append("no DOI or URL to verify")
+            
+            if issues:
+                return f"NEEDS REVIEW: Paper partially matches but {'; '.join(issues)}. Manual verification recommended."
+            return f"NEEDS REVIEW: Moderate confidence match (similarity: {similarity_score*100:.0f}%). Some metadata may be incorrect."
+        
+        elif classification == ClassificationResult.INCONCLUSIVE:
+            return "INCONCLUSIVE: Unable to definitively verify or refute this reference. May require manual verification."
+        
+        return ""
+
     def classify_batch(self, 
                       references_with_results: List[Tuple[Dict[str, Any], List[Dict[str, Any]]]]) -> List[VerificationResult]:
         """
@@ -553,7 +763,8 @@ class ReferenceClassifier:
                     similarity_score=0.0,
                     matched_paper=None,
                     reasons=[f"Classification error: {str(e)}"],
-                    details={"error": True}
+                    details={"error": True},
+                    issue_summary=f"ERROR: Classification failed due to technical error: {str(e)}"
                 ))
         
         return results
@@ -615,6 +826,137 @@ class ReferenceClassifier:
             )
         }
     
+    def _detect_book_reference(self, extracted_ref: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Detect if a reference is likely a book or textbook.
+        
+        Books are poorly indexed in academic paper databases (DBLP, CrossRef, etc.)
+        and often get incorrectly flagged as "fabricated". This method identifies
+        book references so they can be handled appropriately.
+        
+        Args:
+            extracted_ref: Reference extracted from document
+            
+        Returns:
+            Dict with 'is_likely_book' boolean and 'indicators' list
+        """
+        indicators = []
+        title = extracted_ref.get('title', '').lower()
+        venue = extracted_ref.get('venue', '').lower()
+        raw_text = extracted_ref.get('raw_text', '').lower()
+        authors = extracted_ref.get('authors', [])
+        
+        # Publisher indicators (academic book publishers)
+        book_publishers = [
+            'press', 'publisher', 'publishing', 'verlag',
+            'springer', 'wiley', 'elsevier', 'academic press',
+            'cambridge university press', 'oxford university press',
+            'mit press', 'princeton university press', 'mcgraw-hill',
+            'pearson', 'routledge', "o'reilly", 'addison-wesley',
+            'prentice hall', 'morgan kaufmann', 'crc press',
+            'w.h. freeman', 'freeman', 'siam', 'ams',
+            'north-holland', 'chapman', 'kluwer', 'birkhäuser',
+        ]
+        
+        for publisher in book_publishers:
+            if publisher in venue or publisher in raw_text:
+                indicators.append(f"publisher: {publisher}")
+                break
+        
+        # ISBN indicator (escape hyphen properly in character class)
+        import re
+        isbn_pattern = r'isbn[:\s\-]*[\d\-xX]{10,17}'
+        if re.search(isbn_pattern, raw_text, re.IGNORECASE):
+            indicators.append("contains ISBN")
+        
+        # Edition indicator (e.g., "2nd edition", "Third Ed.")
+        edition_pattern = r'\b(\d+(?:st|nd|rd|th)|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\s*(?:ed\.?|edition)\b'
+        if re.search(edition_pattern, raw_text, re.IGNORECASE):
+            indicators.append("has edition number")
+        
+        # Volume indicator for books (different from journal volumes)
+        volume_book_pattern = r'\bvol(?:ume)?\s*\d+\s*(?:of|in)\b'
+        if re.search(volume_book_pattern, raw_text, re.IGNORECASE):
+            indicators.append("multi-volume work")
+        
+        # Book-style titles (typically not papers)
+        book_title_patterns = [
+            r'^introduction to\s',
+            r'^handbook of\s',
+            r'^fundamentals of\s',
+            r'^principles of\s',
+            r'^the art of\s',
+            r'^elements of\s',
+            r'^theory of\s',
+            r'^foundations of\s',
+            r'^advances in\s',
+            r'^guide to\s',
+            r'\bcompanion\b',
+            r'\btextbook\b',
+            r'\bmanual\b',
+            r'\bencyclopedia\b',
+            r'\bdictionary\b',
+            r'a\s+course\s+in\b',
+        ]
+        for pattern in book_title_patterns:
+            if re.search(pattern, title):
+                indicators.append("book-style title")
+                break
+        
+        # Classic CS/Math textbooks - expanded list with author matching
+        classic_books = [
+            ('computers and intractability', ['garey', 'johnson']),
+            ('introduction to algorithms', ['cormen', 'leiserson', 'rivest', 'stein']),
+            ('the art of computer programming', ['knuth']),
+            ('design patterns', ['gamma', 'helm', 'johnson', 'vlissides']),
+            ('compilers: principles', ['aho', 'sethi', 'ullman']),
+            ('computer architecture', ['hennessy', 'patterson']),
+            ('artificial intelligence: a modern approach', ['russell', 'norvig']),
+            ('pattern recognition and machine learning', ['bishop']),
+            ('deep learning', ['goodfellow', 'bengio', 'courville']),
+            ('cryptography and network security', ['stallings']),
+            ('applied cryptography', ['schneier']),
+            ('concrete mathematics', ['graham', 'knuth', 'patashnik']),
+            ('numerical recipes', []),
+            ('linear algebra', ['strang']),
+            ('probability and random processes', ['grimmett', 'stirzaker']),
+            ('algorithm design', ['kleinberg', 'tardos']),
+            ('computational complexity', ['arora', 'barak']),
+            ('automata theory', ['hopcroft', 'motwani', 'ullman']),
+        ]
+        
+        author_names_lower = [a.lower() if isinstance(a, str) else '' for a in authors]
+        for book_title, book_authors in classic_books:
+            if book_title in title:
+                # Extra confidence if authors match
+                if book_authors:
+                    for ba in book_authors:
+                        if any(ba in an for an in author_names_lower):
+                            indicators.append(f"classic textbook: {book_title[:30]} (author match)")
+                            break
+                    else:
+                        indicators.append(f"classic textbook title: {book_title[:30]}")
+                else:
+                    indicators.append(f"classic textbook: {book_title[:30]}")
+                break
+        
+        # No venue/journal but has year (books often lack venue)
+        if not venue and extracted_ref.get('year'):
+            if len(indicators) > 0:  # Only add if other indicators present
+                indicators.append("no venue specified")
+        
+        # Check for chapter/page ranges typical of books
+        if re.search(r'chapter\s+\d+', raw_text, re.IGNORECASE):
+            indicators.append("has chapter reference")
+        
+        # Determine if likely a book based on indicators
+        is_likely_book = len(indicators) >= 1  # At least one strong indicator
+        
+        return {
+            'is_likely_book': is_likely_book,
+            'indicators': indicators
+        }
+
     def _detect_fraud(self, extracted_ref: Dict[str, Any], search_results: List[Dict[str, Any]]) -> Optional[VerificationResult]:
         """
         Detect various types of reference fraud including author manipulation
@@ -725,7 +1067,8 @@ class ReferenceClassifier:
                         "claimed_authors": ref_authors,
                         "cryptodb_verification": cryptodb_details,
                         "threshold_used": self.author_manipulation_threshold
-                    }
+                    },
+                    issue_summary=f"AUTHOR MISMATCH: Title matches but authors differ significantly. Reference claims [{', '.join(ref_authors[:3])}], database shows [{', '.join(paper_authors[:3])}]."
                 )
         
         return None
@@ -770,7 +1113,8 @@ class ReferenceClassifier:
                     "database_count": num_databases,
                     "authoritative_databases_found": list(found_authoritative),
                     "validation_level": "single_database_moderate_similarity_concern"
-                }
+                },
+                issue_summary=f"SINGLE SOURCE: Found only in {', '.join(databases)} with moderate similarity ({best_score*100:.0f}%). Recommend cross-checking with additional sources."
             )
         
         return None
@@ -845,7 +1189,7 @@ class ReferenceClassifier:
             if doi_validation_result.get('metadata_valid', False):
                 # DOI resolves AND metadata matches - very strong evidence of authenticity
                 confidence_boost = doi_validation_result.get('confidence_boost', 0.1)
-                reasons.append(f"✅ DOI metadata validation: {extracted_doi} resolves with matching metadata")
+                reasons.append(f"[OK] DOI metadata validation: {extracted_doi} resolves with matching metadata")
                 reasons.append(f"DOI title similarity: {doi_validation_result.get('metadata_comparison', {}).get('title_similarity', 0):.2f}")
                 reasons.append(f"DOI author similarity: {doi_validation_result.get('metadata_comparison', {}).get('author_similarity', 0):.2f}")
                 
@@ -870,7 +1214,7 @@ class ReferenceClassifier:
                         
             elif doi_validation_result.get('doi_resolves', False):
                 # DOI resolves but metadata doesn't match - this is suspicious (possible fraud)
-                reasons.append(f"⚠️  DOI resolves but metadata mismatch: {extracted_doi}")
+                reasons.append(f"[WARNING] DOI resolves but metadata mismatch: {extracted_doi}")
                 validation_details = doi_validation_result.get('validation_details', [])
                 for detail in validation_details[:3]:  # Show first 3 details
                     reasons.append(f"  - {detail}")
@@ -883,7 +1227,7 @@ class ReferenceClassifier:
             else:
                 # DOI doesn't resolve at all
                 error_msg = doi_validation_result.get('error', 'Unknown error')
-                reasons.append(f"⚠️  DOI validation failed: {extracted_doi} - {error_msg}")
+                reasons.append(f"[WARNING] DOI validation failed: {extracted_doi} - {error_msg}")
                 # Don't immediately classify as fake - could be temporary resolution issue
         
         # Authentic classification using configurable threshold
@@ -974,7 +1318,7 @@ class ReferenceClassifier:
             if doi_validation_result and doi_validation_result.get('metadata_valid', False):
                 # Strong evidence that this is legitimate despite poor database indexing
                 doi_metadata = doi_validation_result.get('doi_metadata', {})
-                reasons.append("⚠️  Low database similarity but DOI metadata validates claimed paper details")
+                reasons.append("[NOTE] Low database similarity but DOI metadata validates claimed paper details")
                 reasons.append(f"DOI resolves to: {doi_metadata.get('title', 'Unknown')}")
                 reasons.append(f"DOI authors: {', '.join(doi_metadata.get('authors', []))}")
                 if doi_metadata.get('publisher'):
@@ -987,7 +1331,7 @@ class ReferenceClassifier:
                 
             elif doi_validation_result and doi_validation_result.get('doi_resolves', False):
                 # DOI resolves but metadata doesn't match - could be reference error or fraud
-                reasons.append("⚠️  DOI resolves but metadata doesn't match claimed details")
+                reasons.append("[WARNING] DOI resolves but metadata doesn't match claimed details")
                 validation_details = doi_validation_result.get('validation_details', [])
                 for detail in validation_details[:2]:  # Show first 2 details
                     reasons.append(f"  - {detail}")
@@ -1021,15 +1365,35 @@ class ReferenceClassifier:
     def _assess_overall_risk(self, authentic_pct: float, fake_pct: float, suspicious_pct: float, fraud_pct: float) -> str:
         """Assess overall risk level based on classification percentages including new fraud types"""
         if fraud_pct > 15 or fake_pct > 20:
-            return "🚨 CRITICAL - Significant fraud detected (author manipulation or fabrication)"
+            return "[CRITICAL] Significant fraud detected (author manipulation or fabrication)"
         elif fraud_pct > 5 or fake_pct > 10 or suspicious_pct > 30:
-            return "🔴 HIGH - Notable fraud or suspicious references detected"
+            return "[HIGH RISK] Notable fraud or suspicious references detected"
         elif fraud_pct > 0 or fake_pct > 5 or suspicious_pct > 15:
-            return "🟡 MEDIUM - Some concerning references require investigation"
+            return "[MEDIUM RISK] Some concerning references require investigation"
         elif suspicious_pct > 5:
-            return "🟢 LOW - Minor concerns with some references"
+            return "[LOW RISK] Minor concerns with some references"
         else:
-            return "✅ MINIMAL - References appear authentic with rigorous verification"
+            return "[MINIMAL RISK] References appear authentic with rigorous verification"
+    
+    def _get_ai_verification(self, extracted_ref: Dict[str, Any], search_results: List[Dict[str, Any]]):
+        """
+        Helper method to get AI verification result
+        
+        Args:
+            extracted_ref: Reference extracted from the document
+            search_results: Search results from academic databases
+            
+        Returns:
+            AI verification result or None if not available
+        """
+        if not self.ai_verifier or not self.ai_verifier.is_available():
+            return None
+            
+        try:
+            return self.ai_verifier.verify_reference(extracted_ref, search_results)
+        except Exception as e:
+            logger.warning(f"AI verification failed: {e}")
+            return None
     
     def _incorporate_ai_analysis(self, 
                                 classification: ClassificationResult,

@@ -25,12 +25,44 @@ import hashlib
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 
+# OpenAI client
 try:
     import openai
     OPENAI_AVAILABLE = True
 except ImportError:
     OPENAI_AVAILABLE = False
     openai = None
+
+# Google Gemini client (new SDK)
+try:
+    from google import genai
+    from google.genai import types
+    GEMINI_AVAILABLE = True
+except ImportError:
+    # Try legacy SDK as fallback
+    try:
+        import google.generativeai as genai
+        types = None
+        GEMINI_AVAILABLE = True
+    except ImportError:
+        GEMINI_AVAILABLE = False
+        genai = None
+        types = None
+
+# Groq client
+try:
+    from groq import Groq
+    GROQ_AVAILABLE = True
+except ImportError:
+    GROQ_AVAILABLE = False
+    Groq = None
+
+# Ollama support (via requests)
+try:
+    import requests
+    OLLAMA_AVAILABLE = True
+except ImportError:
+    OLLAMA_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -43,24 +75,43 @@ class AIVerificationResult:
     red_flags: List[str]
     positive_indicators: List[str]
     metadata: Dict[str, Any]
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for storage, including all fields"""
+        return {
+            'is_authentic': self.is_authentic,
+            'confidence': self.confidence,
+            'reasoning': self.reasoning,
+            'red_flags': self.red_flags,
+            'positive_indicators': self.positive_indicators,
+            **self.metadata  # Include all metadata fields
+        }
 
 class AIReferenceVerifier:
     """
-    Enhanced AI-powered reference verifier with model selection and independent analysis
+    Multi-provider AI-powered reference verifier with support for:
+    - Google Gemini (FREE tier available)
+    - Groq (FREE tier available)
+    - Ollama (FREE, local)
+    - OpenAI (paid)
+    
     Analyzes reference authenticity using advanced natural language understanding
-    with robust error handling, caching, and performance optimization
+    with robust error handling, caching, and performance optimization.
     """
     
-    def __init__(self, api_key: Optional[str] = None, model: str = "gpt-4o-mini"):
+    def __init__(self, api_key: Optional[str] = None, model: str = "gemini-1.5-flash", provider: str = "gemini"):
         """
-        Initialize enhanced AI verifier with model selection support
+        Initialize multi-provider AI verifier
         
         Args:
-            api_key: OpenAI API key (if None, will try environment variable)
-            model: OpenAI model to use (default: gpt-4o-mini)
+            api_key: API key (if None, will try config/environment)
+            model: Model to use (default: gemini-1.5-flash - free)
+            provider: AI provider ("gemini", "groq", "ollama", "openai")
         """
         self.client = None
-        self._verification_cache = {}  # Simple in-memory cache
+        self.provider = provider
+        self.model = model
+        self._verification_cache = {}
         self._performance_stats = {
             'total_requests': 0,
             'successful_requests': 0,
@@ -69,7 +120,7 @@ class AIReferenceVerifier:
             'total_tokens_used': 0,
             'models_used': {}
         }
-        self.available_models = {}
+        self.available_providers = {}
         self.fallback_model = None
         self.independent_analysis = True
         
@@ -82,11 +133,12 @@ class AIReferenceVerifier:
             if not ai_config.get("enabled", False):
                 logger.info("AI verification disabled in configuration - skipping initialization")
                 return
-                
-            # Load model configuration
-            self.available_models = ai_config.get("available_models", {})
+            
+            # Load provider and model configuration
+            self.provider = ai_config.get("provider", provider)
             self.model = ai_config.get("model", model)
-            self.fallback_model = ai_config.get("fallback_model", "gpt-3.5-turbo")
+            self.available_providers = ai_config.get("available_providers", {})
+            self.fallback_model = ai_config.get("fallback_model", "gemini-1.5-flash")
             self.enable_model_fallback = ai_config.get("enable_model_fallback", True)
             
             # Load performance settings
@@ -96,50 +148,119 @@ class AIReferenceVerifier:
             self.verification_weight = ai_config.get("verification_weight", 0.35)
             self.independent_analysis = ai_config.get("independent_analysis", True)
             
-            # Validate selected model
-            if self.model not in self.available_models and self.available_models:
-                logger.warning(f"Selected model '{self.model}' not in available models. Using fallback.")
-                self.model = self.fallback_model
-            
-            # Log model selection
-            model_info = self.available_models.get(self.model, {})
-            logger.info(f"AI verifier initialized with model: {self.model} ({model_info.get('name', 'Unknown')})")
-            if self.independent_analysis:
-                logger.info("AI independent analysis enabled - AI will make decisions based on its own knowledge")
+            # Get API keys for different providers
+            self.openai_api_key = ai_config.get("openai_api_key", "")
+            self.gemini_api_key = ai_config.get("google_gemini_api_key", "")
+            self.groq_api_key = ai_config.get("groq_api_key", "")
+            self.ollama_base_url = ai_config.get("ollama_base_url", "http://localhost:11434")
             
         except ImportError:
             # Fallback if config not available
-            self.model = model
-            self.fallback_model = "gpt-3.5-turbo"
+            self.fallback_model = "gemini-1.5-flash"
             self.timeout = 45
             self.max_tokens = 2500
             self.temperature = 0.1
             self.verification_weight = 0.35
             self.independent_analysis = True
+            self.openai_api_key = os.getenv('OPENAI_API_KEY', '')
+            self.gemini_api_key = os.getenv('GOOGLE_GEMINI_API_KEY', '')
+            self.groq_api_key = os.getenv('GROQ_API_KEY', '')
+            self.ollama_base_url = os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434')
         
-        if not OPENAI_AVAILABLE:
-            logger.warning("OpenAI library not available. AI verification disabled.")
+        # Initialize the appropriate client based on provider
+        self._initialize_client()
+    
+    def _initialize_client(self):
+        """Initialize the AI client based on the selected provider"""
+        if self.provider == "gemini":
+            self._initialize_gemini()
+        elif self.provider == "groq":
+            self._initialize_groq()
+        elif self.provider == "ollama":
+            self._initialize_ollama()
+        elif self.provider == "openai":
+            self._initialize_openai()
+        else:
+            logger.warning(f"Unknown AI provider: {self.provider}")
+    
+    def _initialize_gemini(self):
+        """Initialize Google Gemini client (FREE tier available)"""
+        if not GEMINI_AVAILABLE:
+            logger.warning("Google Generative AI library not available. Install with: pip install google-genai")
             return
-            
-        # Get API key from parameter, config, or environment
-        self.api_key = api_key
-        if not self.api_key:
-            try:
-                from config import DATABASE_CONFIG
-                self.api_key = DATABASE_CONFIG.get("ai_verification", {}).get("openai_api_key")
-            except ImportError:
-                pass
         
-        if not self.api_key:
-            self.api_key = os.getenv('OPENAI_API_KEY')
+        api_key = self.gemini_api_key or os.getenv('GOOGLE_GEMINI_API_KEY', '')
+        if not api_key:
+            logger.warning("No Google Gemini API key provided. Get free key at: https://aistudio.google.com/app/apikey")
+            return
         
-        if not self.api_key:
+        try:
+            # Check if we're using the new SDK (google.genai) or legacy (google.generativeai)
+            if types is not None:
+                # New SDK
+                self.client = genai.Client(api_key=api_key)
+                self._gemini_new_sdk = True
+            else:
+                # Legacy SDK
+                genai.configure(api_key=api_key)
+                self.client = genai.GenerativeModel(self.model)
+                self._gemini_new_sdk = False
+            logger.info(f"Gemini AI verifier initialized with model: {self.model} (FREE tier)")
+        except Exception as e:
+            logger.error(f"Failed to initialize Gemini client: {e}")
+            self.client = None
+    
+    def _initialize_groq(self):
+        """Initialize Groq client (FREE tier available)"""
+        if not GROQ_AVAILABLE:
+            logger.warning("Groq library not available. Install with: pip install groq")
+            return
+        
+        api_key = self.groq_api_key or os.getenv('GROQ_API_KEY', '')
+        if not api_key:
+            logger.warning("No Groq API key provided. Get free key at: https://console.groq.com/keys")
+            return
+        
+        try:
+            self.client = Groq(api_key=api_key)
+            logger.info(f"Groq AI verifier initialized with model: {self.model} (FREE tier)")
+        except Exception as e:
+            logger.error(f"Failed to initialize Groq client: {e}")
+            self.client = None
+    
+    def _initialize_ollama(self):
+        """Initialize Ollama client (FREE, local)"""
+        if not OLLAMA_AVAILABLE:
+            logger.warning("Requests library not available for Ollama. Install with: pip install requests")
+            return
+        
+        try:
+            # Test connection to Ollama
+            response = requests.get(f"{self.ollama_base_url}/api/tags", timeout=5)
+            if response.status_code == 200:
+                self.client = "ollama"  # Use string marker for Ollama
+                logger.info(f"Ollama AI verifier initialized with model: {self.model} (FREE, local)")
+            else:
+                logger.warning("Ollama server not responding. Start it with: ollama serve")
+        except Exception as e:
+            logger.warning(f"Cannot connect to Ollama at {self.ollama_base_url}: {e}")
+            logger.warning("Make sure Ollama is installed and running: https://ollama.ai")
+            self.client = None
+    
+    def _initialize_openai(self):
+        """Initialize OpenAI client (PAID)"""
+        if not OPENAI_AVAILABLE:
+            logger.warning("OpenAI library not available. Install with: pip install openai")
+            return
+        
+        api_key = self.openai_api_key or os.getenv('OPENAI_API_KEY', '')
+        if not api_key:
             logger.warning("No OpenAI API key provided. AI verification disabled.")
             return
-            
+        
         try:
-            self.client = openai.OpenAI(api_key=self.api_key)
-            # Note: Success logging is handled by the classifier
+            self.client = openai.OpenAI(api_key=api_key)
+            logger.info(f"OpenAI AI verifier initialized with model: {self.model} (PAID)")
         except Exception as e:
             logger.error(f"Failed to initialize OpenAI client: {e}")
             self.client = None
@@ -158,18 +279,45 @@ class AIReferenceVerifier:
         return self.client is not None
     
     def get_model_info(self) -> Dict[str, Any]:
-        """Get information about the current model"""
-        model_info = self.available_models.get(self.model, {})
+        """Get information about the current provider and model"""
+        provider_info = self.available_providers.get(self.provider, {})
+        model_info = provider_info.get("models", {}).get(self.model, {})
+        
         return {
+            "provider": self.provider,
+            "provider_name": provider_info.get("name", "Unknown"),
+            "cost_level": provider_info.get("cost_level", "unknown"),
             "current_model": self.model,
-            "model_name": model_info.get("name", "Unknown"),
-            "description": model_info.get("description", "No description available"),
-            "cost_level": model_info.get("cost_level", "unknown"),
-            "supports_json": model_info.get("supports_json", False),
+            "model_name": model_info.get("name", self.model),
+            "model_cost": model_info.get("cost", "unknown"),
             "fallback_model": self.fallback_model,
             "independent_analysis": self.independent_analysis,
-            "verification_weight": self.verification_weight
+            "verification_weight": getattr(self, 'verification_weight', 0.35)
         }
+    
+    @staticmethod
+    def get_free_providers_info() -> str:
+        """Get information about free AI providers for user guidance"""
+        return """
+FREE AI Providers for VerifyRef:
+
+1. Google Gemini (RECOMMENDED)
+   - Get free API key: https://aistudio.google.com/app/apikey
+   - Set: GOOGLE_GEMINI_API_KEY=your_key
+   - Models: gemini-1.5-flash (free), gemini-1.5-pro (limited free)
+
+2. Groq (FAST)
+   - Get free API key: https://console.groq.com/keys
+   - Set: GROQ_API_KEY=your_key
+   - Models: llama-3.3-70b-versatile, mixtral-8x7b-32768
+
+3. Ollama (LOCAL, no API key needed)
+   - Install: https://ollama.ai
+   - Run: ollama serve
+   - Models: llama3.2, mistral, phi3
+
+To enable: Set ENABLE_AI_VERIFICATION=true and AI_PROVIDER=gemini (or groq/ollama)
+"""
     
     def verify_reference(self, 
                         extracted_ref: Dict[str, Any], 
@@ -230,49 +378,28 @@ class AIReferenceVerifier:
     
     def _execute_ai_request(self, prompt: str, start_time: float, cache_key: str, analysis_type: str) -> Optional[AIVerificationResult]:
         """
-        Execute AI request with model fallback and error handling
+        Execute AI request with multi-provider support and error handling
         """
         max_retries = 3
         retry_delay = 1
-        current_model = self.model
         
         for attempt in range(max_retries):
             try:
-                # Prepare request parameters with intelligent model selection
-                request_params = {
-                    "model": current_model,
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": self._get_system_prompt()
-                        },
-                        {
-                            "role": "user", 
-                            "content": prompt
-                        }
-                    ],
-                    "temperature": self.temperature,
-                    "max_tokens": self.max_tokens,
-                }
+                # Route to appropriate provider
+                if self.provider == "gemini":
+                    response_content, tokens_used = self._call_gemini(prompt)
+                elif self.provider == "groq":
+                    response_content, tokens_used = self._call_groq(prompt)
+                elif self.provider == "ollama":
+                    response_content, tokens_used = self._call_ollama(prompt)
+                elif self.provider == "openai":
+                    response_content, tokens_used = self._call_openai(prompt)
+                else:
+                    logger.error(f"Unknown AI provider: {self.provider}")
+                    return None
                 
-                # Add JSON response format only for compatible models
-                model_info = self.available_models.get(current_model, {})
-                if model_info.get("supports_json", False):
-                    request_params["response_format"] = {"type": "json_object"}
-                
-                # Make API call with timeout
-                response = self.client.chat.completions.create(
-                    timeout=self.timeout,
-                    **request_params
-                )
-                
-                # Validate response
-                if not response.choices or not response.choices[0].message:
-                    raise ValueError("Empty response from OpenAI API")
-                
-                response_content = response.choices[0].message.content
                 if not response_content:
-                    raise ValueError("Empty content in OpenAI response")
+                    raise ValueError(f"Empty response from {self.provider} API")
                 
                 result_data = self._parse_ai_response(response_content)
                 
@@ -286,12 +413,13 @@ class AIReferenceVerifier:
                 # Track performance statistics
                 response_time = time.time() - start_time
                 self._performance_stats['successful_requests'] += 1
-                self._performance_stats['total_tokens_used'] += response.usage.total_tokens if response.usage else 0
+                self._performance_stats['total_tokens_used'] += tokens_used
                 
                 # Track model usage
-                if current_model not in self._performance_stats['models_used']:
-                    self._performance_stats['models_used'][current_model] = 0
-                self._performance_stats['models_used'][current_model] += 1
+                model_key = f"{self.provider}/{self.model}"
+                if model_key not in self._performance_stats['models_used']:
+                    self._performance_stats['models_used'][model_key] = 0
+                self._performance_stats['models_used'][model_key] += 1
                 
                 # Update average response time
                 current_avg = self._performance_stats['average_response_time']
@@ -308,10 +436,10 @@ class AIReferenceVerifier:
                     red_flags=self._validate_list(result_data.get('red_flags', [])),
                     positive_indicators=self._validate_list(result_data.get('positive_indicators', [])),
                     metadata={
-                        'model': current_model,
-                        'model_fallback_used': current_model != self.model,
-                        'tokens_used': response.usage.total_tokens if response.usage else 0,
-                        'analysis_version': '3.0',
+                        'provider': self.provider,
+                        'model': self.model,
+                        'tokens_used': tokens_used,
+                        'analysis_version': '3.1',
                         'analysis_type': analysis_type,
                         'attempt': attempt + 1,
                         'response_time': response_time,
@@ -332,15 +460,6 @@ class AIReferenceVerifier:
             except Exception as e:
                 error_msg = str(e)
                 
-                # Handle model fallback
-                if (("response_format" in error_msg or "model" in error_msg.lower()) 
-                    and current_model != self.fallback_model 
-                    and self.enable_model_fallback 
-                    and attempt == 0):
-                    logger.warning(f"Model {current_model} failed, trying fallback model {self.fallback_model}")
-                    current_model = self.fallback_model
-                    continue
-                
                 # Handle rate limits and timeouts
                 if "rate_limit" in error_msg.lower() and attempt < max_retries - 1:
                     wait_time = retry_delay * (2 ** attempt)
@@ -358,6 +477,112 @@ class AIReferenceVerifier:
                     retry_delay *= 2
         
         return None
+    
+    def _call_gemini(self, prompt: str) -> tuple:
+        """Call Google Gemini API (FREE tier available)"""
+        system_prompt = self._get_system_prompt()
+        full_prompt = f"{system_prompt}\n\n{prompt}"
+        
+        # Check if using new SDK or legacy
+        if getattr(self, '_gemini_new_sdk', False):
+            # New SDK (google.genai) requires full model path
+            model_name = self.model
+            if not model_name.startswith('models/'):
+                model_name = f"models/{model_name}"
+            
+            # Try gemini-2.0-flash if the specified model fails
+            try:
+                response = self.client.models.generate_content(
+                    model=model_name,
+                    contents=full_prompt,
+                    config=types.GenerateContentConfig(
+                        temperature=self.temperature,
+                        max_output_tokens=self.max_tokens,
+                    )
+                )
+                return response.text, 0
+            except Exception as e:
+                # Fallback to gemini-2.0-flash
+                if 'gemini-2.0-flash' not in model_name:
+                    logger.warning(f"Model {model_name} failed, trying gemini-2.0-flash: {e}")
+                    response = self.client.models.generate_content(
+                        model="models/gemini-2.0-flash",
+                        contents=full_prompt,
+                        config=types.GenerateContentConfig(
+                            temperature=self.temperature,
+                            max_output_tokens=self.max_tokens,
+                        )
+                    )
+                    return response.text, 0
+                raise
+        else:
+            # Legacy SDK (google.generativeai)
+            response = self.client.generate_content(
+                full_prompt,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=self.temperature,
+                    max_output_tokens=self.max_tokens,
+                )
+            )
+            return response.text, 0  # Gemini doesn't report token usage in free tier
+    
+    def _call_groq(self, prompt: str) -> tuple:
+        """Call Groq API (FREE tier available)"""
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": self._get_system_prompt()},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+        )
+        
+        tokens = response.usage.total_tokens if response.usage else 0
+        return response.choices[0].message.content, tokens
+    
+    def _call_ollama(self, prompt: str) -> tuple:
+        """Call Ollama API (FREE, local)"""
+        system_prompt = self._get_system_prompt()
+        
+        response = requests.post(
+            f"{self.ollama_base_url}/api/generate",
+            json={
+                "model": self.model,
+                "prompt": f"{system_prompt}\n\n{prompt}",
+                "stream": False,
+                "options": {
+                    "temperature": self.temperature,
+                    "num_predict": self.max_tokens,
+                }
+            },
+            timeout=self.timeout
+        )
+        
+        if response.status_code != 200:
+            raise ValueError(f"Ollama API error: {response.text}")
+        
+        result = response.json()
+        return result.get("response", ""), 0
+    
+    def _call_openai(self, prompt: str) -> tuple:
+        """Call OpenAI API (PAID)"""
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": self._get_system_prompt()},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            timeout=self.timeout,
+        )
+        
+        if not response.choices or not response.choices[0].message:
+            raise ValueError("Empty response from OpenAI API")
+        
+        tokens = response.usage.total_tokens if response.usage else 0
+        return response.choices[0].message.content, tokens
     
     def _build_independent_analysis_prompt(self, extracted_ref: Dict[str, Any], paper_context: Optional[str]) -> str:
         """

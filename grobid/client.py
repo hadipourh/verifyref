@@ -19,6 +19,8 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import requests
 import logging
+import re
+import html
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 from xml.etree import ElementTree as ET
@@ -26,6 +28,59 @@ from xml.etree import ElementTree as ET
 from config import GROBID_CONFIG
 
 logger = logging.getLogger(__name__)
+
+
+def clean_extracted_title(title: str) -> str:
+    """
+    Clean and normalize extracted titles from GROBID.
+    
+    Handles common issues like:
+    - Mangled HTML tags: "SPHINCS sup+/sup" -> "SPHINCS+"
+    - Empty/mangled tags: "SPHINCS <>+<>" -> "SPHINCS+"
+    - Leftover XML tags: "<sup>+</sup>" -> "+"
+    - HTML entities: "&amp;" -> "&"
+    - Extra whitespace around special characters
+    
+    Args:
+        title: Raw title string from GROBID
+        
+    Returns:
+        Cleaned title string
+    """
+    if not title:
+        return title
+    
+    # Pattern 1: Handle proper XML/HTML tags <sup>...</sup>, <sub>...</sub> FIRST
+    # Preserve a space after the content to avoid merging words
+    title = re.sub(r'\s*<sup>([^<]*)</sup>\s*', r'\1 ', title)
+    title = re.sub(r'\s*<sub>([^<]*)</sub>\s*', r'\1 ', title)
+    title = re.sub(r'<i>([^<]*)</i>', r'\1', title)
+    title = re.sub(r'<b>([^<]*)</b>', r'\1', title)
+    title = re.sub(r'<em>([^<]*)</em>', r'\1', title)
+    
+    # Pattern 2: Handle mangled sup/sub tags like "sup+/sup" or "sub2/sub"
+    # This handles cases where GROBID outputs "text sup+/sup more" instead of "text+ more"
+    title = re.sub(r'\s*sup([^/]*)/sup\s*', r'\1 ', title)
+    title = re.sub(r'\s*sub([^/]*)/sub\s*', r'\1 ', title)
+    
+    # Pattern 3: Handle empty/mangled tags like "<>+<>" or "< >+< >"
+    # Common GROBID artifact: SPHINCS <>+<> -> SPHINCS+ (keep space after)
+    title = re.sub(r'\s*<\s*>\s*([^<]*)\s*<\s*>\s*', r'\1 ', title)
+    title = re.sub(r'\s*<>\s*', '', title)
+    
+    # Pattern 4: Handle self-closing or empty tags
+    title = re.sub(r'<[^>]+/>', '', title)
+    
+    # Pattern 5: Remove any remaining HTML/XML tags
+    title = re.sub(r'<[^>]+>', '', title)
+    
+    # Decode HTML entities
+    title = html.unescape(title)
+    
+    # Clean up whitespace (normalizes multiple spaces to single)
+    title = ' '.join(title.split())
+    
+    return title.strip()
 
 class GrobidClient:
     """
@@ -77,9 +132,31 @@ class GrobidClient:
             return None
             
         try:
-            # Use GROBID's processCitation endpoint
+            # IMPORTANT FOR FRAUD DETECTION:
+            # First parse WITHOUT consolidation to get the ORIGINAL authors from the citation
+            # This preserves what the user actually wrote, which is critical for detecting author manipulation
             endpoint = f"{self.base_url}/api/processCitation"
             
+            # Step 1: Parse without consolidation to get original data
+            data_no_consolidate = {
+                'citations': citation_text.strip(),
+                'consolidateCitations': '0'  # NO consolidation first
+            }
+            
+            response_original = requests.post(
+                endpoint,
+                data=data_no_consolidate,
+                timeout=self.timeout,
+                headers={'Content-Type': 'application/x-www-form-urlencoded'}
+            )
+            
+            original_authors = []
+            if response_original.status_code == 200:
+                parsed_original = self._parse_citation_xml(response_original.text, citation_text)
+                if parsed_original:
+                    original_authors = parsed_original.get('authors', [])
+            
+            # Step 2: Parse with consolidation for enhanced metadata (DOI, full title, etc.)
             data = {
                 'citations': citation_text.strip(),
                 'consolidateCitations': '1' if self.use_consolidation else '0'
@@ -96,6 +173,16 @@ class GrobidClient:
                 # Parse the XML response
                 parsed_citation = self._parse_citation_xml(response.text, citation_text)
                 if parsed_citation:
+                    # CRITICAL: Preserve original authors for fraud detection
+                    # If we got original authors without consolidation, store them separately
+                    if original_authors:
+                        parsed_citation['original_authors'] = original_authors
+                        # Use original authors as primary if consolidation changed them
+                        if original_authors != parsed_citation.get('authors', []):
+                            parsed_citation['consolidated_authors'] = parsed_citation.get('authors', [])
+                            parsed_citation['authors'] = original_authors  # Use original for comparison
+                            logger.debug(f"Preserved original authors for fraud detection: {original_authors}")
+                    
                     logger.debug(f"Successfully parsed citation: {citation_text[:60]}...")
                     return parsed_citation
                 else:
@@ -360,8 +447,11 @@ class GrobidClient:
             
             # Extract title with enhanced approach - try multiple strategies
             title_elem = self._find_title_element(biblio_elem, namespace)
-            if title_elem is not None and title_elem.text:
-                title_text = title_elem.text.strip()
+            if title_elem is not None:
+                # Get full text including child elements (handles <sup>, <sub>, etc.)
+                title_text = ''.join(title_elem.itertext()).strip()
+                # Clean up mangled HTML/XML artifacts from GROBID
+                title_text = clean_extracted_title(title_text)
                 # Check for confidence attributes
                 if 'confidence' in title_elem.attrib:
                     reference['confidence_indicators']['title'] = float(title_elem.attrib['confidence'])

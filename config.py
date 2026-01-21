@@ -42,15 +42,33 @@ ENABLE_GOOGLE_SCHOLAR = True  # ← Set to True to enable Google Scholar searche
 # Get it from: https://www.semanticscholar.org/product/api#api-key-form
 SEMANTIC_SCHOLAR_API_KEY = ""  # ← Add your key here
 
-# OpenAI API Key (only needed for AI-powered fraud detection)
+# OpenAI API Key (only needed for AI-powered fraud detection with OpenAI models)
 # Get it from: https://platform.openai.com/api-keys
 # Set via environment variable or .env file for security
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")  # ← Set in .env file or environment
 
-# AI Model Selection (choose which OpenAI model to use for verification)
-# Available options: "gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"
-# Cost levels: gpt-4o (high), gpt-4o-mini (low), gpt-4-turbo (medium-high), gpt-3.5-turbo (very-low)
-AI_MODEL = "gpt-4o"  # ← Change this to select your preferred AI model
+# Google Gemini API Key (FREE tier available - recommended for cost-free AI verification)
+# Get it from: https://aistudio.google.com/app/apikey
+GOOGLE_GEMINI_API_KEY = os.getenv("GOOGLE_GEMINI_API_KEY", "")  # ← Set in .env file or environment
+
+# Groq API Key (FREE tier with fast inference)
+# Get it from: https://console.groq.com/keys
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")  # ← Set in .env file or environment
+
+# AI Provider Selection (choose which AI service to use)
+# Available options: "openai", "gemini", "groq", "ollama"
+# - "openai": Paid, most capable (GPT-4, GPT-3.5)
+# - "gemini": FREE tier available (Gemini Pro)
+# - "groq": FREE tier available, very fast (Llama, Mixtral)
+# - "ollama": FREE, runs locally (requires Ollama installed)
+AI_PROVIDER = os.getenv("AI_PROVIDER", "gemini")  # ← Default to free Gemini
+
+# AI Model Selection (model name depends on provider)
+# OpenAI: "gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"
+# Gemini: "gemini-2.0-flash" (free), "gemini-2.5-flash" (free)
+# Groq: "llama-3.3-70b-versatile" (free), "mixtral-8x7b-32768" (free)
+# Ollama: "llama3.2", "mistral", "phi3" (local, free)
+AI_MODEL = os.getenv("AI_MODEL", "gemini-2.0-flash")  # ← Default to free Gemini 2.0 Flash
 
 # AI Decision Weight (how much influence AI has in final verification decision)
 # Range: 0.0 to 1.0 (0% to 100% influence)
@@ -253,48 +271,67 @@ DATABASE_CONFIG = {
         "respect_robots_txt": True,
     },
     
-    # AI Verification Configuration (Enhanced with Model Selection)
+    # AI Verification Configuration (Enhanced with Multi-Provider Support)
     "ai_verification": {
-        "enabled": os.getenv("ENABLE_AI_VERIFICATION", "false").lower() == "true",  # Disabled by default (paid models)
+        "enabled": os.getenv("ENABLE_AI_VERIFICATION", "false").lower() == "true",  # Disabled by default
         
-        # OpenAI API Key - Use config first, then environment variable
-        "openai_api_key": OPENAI_API_KEY or os.getenv("OPENAI_API_KEY", ""),  # No default key - user must provide
+        # AI Provider Selection ("openai", "gemini", "groq", "ollama")
+        "provider": AI_PROVIDER or os.getenv("AI_PROVIDER", "gemini"),  # Default to free Gemini
         
-        # Available Models (ordered by capability and cost)
-        "available_models": {
-            "gpt-4o": {
-                "name": "GPT-4 Omni",
-                "description": "Most capable model, highest accuracy",
-                "cost_level": "high",
-                "supports_json": True,
-                "recommended_for": "Critical research verification"
+        # API Keys for different providers
+        "openai_api_key": OPENAI_API_KEY or os.getenv("OPENAI_API_KEY", ""),
+        "google_gemini_api_key": GOOGLE_GEMINI_API_KEY or os.getenv("GOOGLE_GEMINI_API_KEY", ""),
+        "groq_api_key": GROQ_API_KEY or os.getenv("GROQ_API_KEY", ""),
+        "ollama_base_url": os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),  # Local Ollama server
+        
+        # Available Providers and Models
+        "available_providers": {
+            "gemini": {
+                "name": "Google Gemini",
+                "description": "FREE tier available - Recommended for cost-free verification",
+                "cost_level": "free",
+                "models": {
+                    "gemini-2.0-flash": {"name": "Gemini 2.0 Flash", "cost": "free", "recommended": True},
+                    "gemini-2.5-flash": {"name": "Gemini 2.5 Flash", "cost": "free", "recommended": False},
+                    "gemini-2.5-pro": {"name": "Gemini 2.5 Pro", "cost": "limited-free", "recommended": False},
+                }
             },
-            "gpt-4o-mini": {
-                "name": "GPT-4 Omni Mini", 
-                "description": "Balanced performance and cost",
-                "cost_level": "low",
-                "supports_json": True,
-                "recommended_for": "General academic verification"
+            "groq": {
+                "name": "Groq (Fast Inference)",
+                "description": "FREE tier - Very fast inference with open models",
+                "cost_level": "free",
+                "models": {
+                    "llama-3.3-70b-versatile": {"name": "Llama 3.3 70B", "cost": "free", "recommended": True},
+                    "llama-3.1-8b-instant": {"name": "Llama 3.1 8B", "cost": "free", "recommended": False},
+                    "mixtral-8x7b-32768": {"name": "Mixtral 8x7B", "cost": "free", "recommended": False},
+                }
             },
-            "gpt-4-turbo": {
-                "name": "GPT-4 Turbo",
-                "description": "High capability, faster responses",
-                "cost_level": "medium-high", 
-                "supports_json": True,
-                "recommended_for": "Professional verification workflows"
+            "ollama": {
+                "name": "Ollama (Local)",
+                "description": "FREE - Runs locally, requires Ollama installation",
+                "cost_level": "free",
+                "models": {
+                    "llama3.2": {"name": "Llama 3.2", "cost": "free", "recommended": True},
+                    "mistral": {"name": "Mistral", "cost": "free", "recommended": False},
+                    "phi3": {"name": "Phi-3", "cost": "free", "recommended": False},
+                }
             },
-            "gpt-3.5-turbo": {
-                "name": "GPT-3.5 Turbo",
-                "description": "Fast and economical option",
-                "cost_level": "very-low",
-                "supports_json": False,
-                "recommended_for": "Basic verification tasks"
+            "openai": {
+                "name": "OpenAI",
+                "description": "Paid - Most capable models",
+                "cost_level": "paid",
+                "models": {
+                    "gpt-4o": {"name": "GPT-4 Omni", "cost": "high", "recommended": False},
+                    "gpt-4o-mini": {"name": "GPT-4 Omni Mini", "cost": "low", "recommended": True},
+                    "gpt-4-turbo": {"name": "GPT-4 Turbo", "cost": "medium-high", "recommended": False},
+                    "gpt-3.5-turbo": {"name": "GPT-3.5 Turbo", "cost": "very-low", "recommended": False},
+                }
             }
         },
         
         # Selected Model Configuration
-        "model": AI_MODEL or os.getenv("AI_MODEL", "gpt-4o-mini"),  # Use config variable first, then env var, then default
-        "fallback_model": "gpt-3.5-turbo",  # Fallback if primary model fails
+        "model": AI_MODEL or os.getenv("AI_MODEL", "gemini-2.0-flash"),  # Default to free Gemini 2.0 Flash
+        "fallback_model": "gemini-2.0-flash",  # Fallback if primary model fails
         
         # Performance Settings
         "timeout": 45,  # Increased timeout for enhanced prompts
@@ -319,8 +356,9 @@ CLASSIFICATION_CONFIG = {
     "suspicious_threshold": float(os.getenv("SUSPICIOUS_THRESHOLD", "0.25")),   # INCREASED: Below this = fabricated/fake
     
     # Feature weights (must sum to 1.0)
-    "title_weight": float(os.getenv("TITLE_WEIGHT", "0.6")),     # Title similarity importance
-    "author_weight": float(os.getenv("AUTHOR_WEIGHT", "0.2")),   # Author similarity importance  
+    # NOTE: Author weight increased for better fraud detection - critical to catch author manipulation
+    "title_weight": float(os.getenv("TITLE_WEIGHT", "0.45")),    # Title similarity importance (reduced from 0.6)
+    "author_weight": float(os.getenv("AUTHOR_WEIGHT", "0.35")),  # Author similarity importance (increased from 0.2)
     "venue_weight": float(os.getenv("VENUE_WEIGHT", "0.15")),    # Venue similarity importance
     "year_weight": float(os.getenv("YEAR_WEIGHT", "0.05")),      # Year similarity importance
     "max_year_difference": int(os.getenv("MAX_YEAR_DIFFERENCE", "3")),  # Max acceptable year difference

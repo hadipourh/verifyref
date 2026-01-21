@@ -71,10 +71,10 @@ def save_results(results: Dict[str, Any], output_file: str, output_format: str, 
             raise ValueError(f"Unsupported output format: {output_format}")
         
         if console:
-            console.print(f"[green]📊 Results saved to: {output_file} ({output_format.upper()} format)[/green]")
+            console.print(f"[green]Results saved to: {output_file} ({output_format.upper()} format)[/green]")
         
     except Exception as e:
         if console:
-            console.print(f"[red]❌ Error saving results: {e}[/red]")
+            console.print(f"[red][ERROR] Error saving results: {e}[/red]")
         logger.error(f"Error saving results: {e}")
         raise

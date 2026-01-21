@@ -143,7 +143,7 @@ def cached_database_search(verifier: MultiDatabaseVerifier, parsed_ref: Dict[str
         if cache_key in _search_cache:
             _cache_hits += 1
             if verbose:
-                console.print(f"[dim green]📋 Using cached results for similar reference[/dim green]")
+                console.print(f"[dim green]Using cached results for similar reference[/dim green]")
             return _search_cache[cache_key]
         
         # Increment cache miss counter
@@ -190,13 +190,13 @@ def verify_references(input_path: str, output_file: str = None, output_format: s
     
     # Print header
     console.print(Panel.fit(
-        "[bold blue]🔍 VerifyRef Reference Verification[/bold blue]",
+        "[bold blue]VerifyRef Reference Verification[/bold blue]",
         border_style="blue"
     ))
     
     # Validate configuration
     if not validate_config():
-        console.print("[red]❌ Configuration validation failed[/red]")
+        console.print("[red][ERROR] Configuration validation failed[/red]")
         sys.exit(1)
     
     # Initialize components with fast mode for better performance
@@ -227,80 +227,80 @@ def verify_references(input_path: str, output_file: str = None, output_format: s
     with progress_context as progress:
         if input_type == 'pdf':
             if not verbose:
-                extract_task = progress.add_task("📄 Extracting references from PDF...", total=None)
+                extract_task = progress.add_task("Extracting references from PDF...", total=None)
             else:
-                console.print("📄 Extracting references from PDF...")
+                console.print("Extracting references from PDF...")
             try:
                 references = grobid_client.extract_references(input_path)
                 if not verbose:
-                    progress.update(extract_task, description="✅ PDF processing complete")
+                    progress.update(extract_task, description="[OK] PDF processing complete")
                 else:
-                    console.print("✅ PDF processing complete")
+                    console.print("[OK] PDF processing complete")
                 if not references:
-                    console.print("[red]❌ Failed to extract references from PDF[/red]")
+                    console.print("[red][ERROR] Failed to extract references from PDF[/red]")
                     sys.exit(1)
             except Exception as e:
                 if not verbose:
-                    progress.update(extract_task, description="❌ PDF processing failed")
+                    progress.update(extract_task, description="[FAILED] PDF processing failed")
                 else:
-                    console.print("❌ PDF processing failed")
-                console.print(f"[red]❌ Error processing PDF: {e}[/red]")
+                    console.print("[FAILED] PDF processing failed")
+                console.print(f"[red][ERROR] Error processing PDF: {e}[/red]")
                 sys.exit(1)
                 
         elif input_type == 'text_file':
             if not verbose:
-                extract_task = progress.add_task("📝 Parsing references from text file...", total=None)
+                extract_task = progress.add_task("Parsing references from text file...", total=None)
             else:
-                console.print("📝 Parsing references from text file...")
+                console.print("Parsing references from text file...")
             try:
                 references = parse_text_file_to_raw(input_path)
                 if not verbose:
-                    progress.update(extract_task, description="✅ Text file processing complete")
+                    progress.update(extract_task, description="[OK] Text file processing complete")
                 else:
-                    console.print("✅ Text file processing complete")
+                    console.print("[OK] Text file processing complete")
                 if not references:
-                    console.print("[red]❌ No valid references found in text file[/red]")
+                    console.print("[red][ERROR] No valid references found in text file[/red]")
                     sys.exit(1)
             except Exception as e:
                 if not verbose:
-                    progress.update(extract_task, description="❌ Text file processing failed")
+                    progress.update(extract_task, description="[FAILED] Text file processing failed")
                 else:
-                    console.print("❌ Text file processing failed")
-                console.print(f"[red]❌ Error processing text file: {e}[/red]")
+                    console.print("[FAILED] Text file processing failed")
+                console.print(f"[red][ERROR] Error processing text file: {e}[/red]")
                 sys.exit(1)
                 
         else:  # single_reference
             if not verbose:
-                extract_task = progress.add_task("✏️ Parsing single reference...", total=None)
+                extract_task = progress.add_task("Parsing single reference...", total=None)
             else:
-                console.print("✏️ Parsing single reference...")
+                console.print("Parsing single reference...")
             try:
                 single_ref = parse_single_reference_to_raw(input_path)
                 references = [single_ref]
                 if not verbose:
-                    progress.update(extract_task, description="✅ Reference parsing complete")
+                    progress.update(extract_task, description="[OK] Reference parsing complete")
                 else:
-                    console.print("✅ Reference parsing complete")
+                    console.print("[OK] Reference parsing complete")
             except Exception as e:
                 if not verbose:
-                    progress.update(extract_task, description="❌ Reference parsing failed")
+                    progress.update(extract_task, description="[FAILED] Reference parsing failed")
                 else:
-                    console.print("❌ Reference parsing failed")
-                console.print(f"[red]❌ Error parsing single reference: {e}[/red]")
+                    console.print("[FAILED] Reference parsing failed")
+                console.print(f"[red][ERROR] Error parsing single reference: {e}[/red]")
                 sys.exit(1)
     
     # Print success message after progress is complete
     if input_type == 'pdf':
-        console.print(f"[green]📚 Extracted {len(references)} references from PDF[/green]")
+        console.print(f"[green]Extracted {len(references)} references from PDF[/green]")
     elif input_type == 'text_file':
-        console.print(f"[green]📚 Extracted {len(references)} references from text file[/green]")
+        console.print(f"[green]Extracted {len(references)} references from text file[/green]")
     else:
-        console.print(f"[green]📚 Parsed single reference[/green]")
+        console.print(f"[green]Parsed single reference[/green]")
     
     # Optimized reference verification with parallel processing
     verified_references = []
     
-    console.print(f"[blue]🔍 Starting verification of {len(references)} references...[/blue]")
+    console.print(f"[blue]Starting verification of {len(references)} references...[/blue]")
     
     # Define processing function for parallel execution
     def create_error_result(index, ref, error_reason):
@@ -309,7 +309,8 @@ def verify_references(input_path: str, output_file: str = None, output_format: s
         error_result = VerificationResult(
             classification=ClassificationResult.INCONCLUSIVE,
             confidence=0.0, similarity_score=0.0, matched_paper=None,
-            reasons=[error_reason], details={}
+            reasons=[error_reason], details={},
+            issue_summary=f"ERROR: {error_reason}"
         )
         return {
             'index': index, 'original': ref, 'parsed': None,
@@ -384,21 +385,21 @@ def verify_references(input_path: str, output_file: str = None, output_format: s
         
         if not verbose:
             main_task = progress.add_task(
-                f"🔍 Processing references [0/{len(references)}]", 
+                f"Processing references [0/{len(references)}]", 
                 total=len(references)
             )
         
         if verbose:
             # Sequential processing for verbose mode to maintain ordered output
             for i, ref in enumerate(references, 1):
-                console.print(f"[dim]🔍 Processing reference [{i}/{len(references)}][/dim]")
+                console.print(f"[dim]Processing reference [{i}/{len(references)}][/dim]")
                 
                 # Show current reference
                 if isinstance(ref, dict):
                     ref_preview = ref.get('title', str(ref)[:60]) + "..." if len(str(ref)) > 60 else str(ref)
                 else:
                     ref_preview = str(ref)[:60] + "..." if len(str(ref)) > 60 else str(ref)
-                console.print(f"[dim]  📖 {ref_preview}[/dim]")
+                console.print(f"[dim]  {ref_preview}[/dim]")
                 
                 result = process_single_reference((i, ref))
                 
@@ -407,19 +408,19 @@ def verify_references(input_path: str, output_file: str = None, output_format: s
                     title_preview = result['parsed'].get('title', 'Unknown')
                     authors_preview = result['parsed'].get('authors', [])
                     
-                    ref_header = f"═══ Reference {i}/{len(references)} ═══"
-                    separator_line = "═" * 80
-                    sub_separator = "─" * 80
+                    ref_header = f"Reference {i}/{len(references)}"
+                    separator_line = "=" * 80
+                    sub_separator = "-" * 80
                     
                     console.print()
                     console.print(f"[bold cyan]{separator_line}[/bold cyan]")
                     console.print(f"[bold cyan]{ref_header}[/bold cyan]")
-                    console.print(f"[bold green]📖 {title_preview}[/bold green]")
+                    console.print(f"[bold green]Title: {title_preview}[/bold green]")
                     
                     if authors_preview:
                         # Display all authors without truncation
                         authors_str = ", ".join(authors_preview)
-                        console.print(f"[dim]👥 {authors_str}[/dim]")
+                        console.print(f"[dim]Authors: {authors_str}[/dim]")
                     
                     console.print(f"[bold cyan]{sub_separator}[/bold cyan]")
                     
@@ -428,14 +429,14 @@ def verify_references(input_path: str, output_file: str = None, output_format: s
                     total_results = sum(len(results) for results in verification_results.values())
                     
                     if total_results > 0:
-                        console.print(f"[dim green]✅ Found {total_results} potential matches across databases[/dim green]")
+                        console.print(f"[dim green]Found {total_results} potential matches across databases[/dim green]")
                         for db_name, db_results in verification_results.items():
                             if db_results:
-                                console.print(f"[dim]  • {db_name}: {len(db_results)} results[/dim]")
+                                console.print(f"[dim]  - {db_name}: {len(db_results)} results[/dim]")
                     else:
-                        console.print(f"[dim yellow]⚠️ No matches found in any database[/dim yellow]")
+                        console.print(f"[dim yellow][WARNING] No matches found in any database[/dim yellow]")
                     
-                    # Show classification
+                    # Show classification with professional labels
                     classification_value = result['classification']
                     confidence = result['confidence']
                     
@@ -444,12 +445,18 @@ def verify_references(input_path: str, output_file: str = None, output_format: s
                         'author_manipulation': 'purple', 'fabricated': 'red', 'inconclusive': 'blue'
                     }.get(classification_value, 'white')
                     
-                    class_emoji = {
-                        'authentic': '✅', 'suspicious': '🔍', 'fake': '❌',
-                        'author_manipulation': '🔄', 'fabricated': '🚫', 'inconclusive': '❓'
-                    }.get(classification_value, '❓')
+                    class_label = {
+                        'authentic': '[VERIFIED]', 'suspicious': '[SUSPICIOUS]', 'fake': '[FAKE]',
+                        'author_manipulation': '[AUTHOR ISSUE]', 'fabricated': '[NOT FOUND]', 'inconclusive': '[INCONCLUSIVE]'
+                    }.get(classification_value, '[UNKNOWN]')
                     
-                    console.print(f"[{class_color}]{class_emoji} Classification: {classification_value.upper()} ({confidence*100:.1f}% confidence)[/{class_color}]")
+                    console.print(f"[{class_color}]{class_label} {classification_value.upper()} ({confidence*100:.1f}% confidence)[/{class_color}]")
+                    
+                    # Show issue summary if available
+                    classification_result = result.get('classification_result')
+                    if classification_result and hasattr(classification_result, 'issue_summary') and classification_result.issue_summary:
+                        console.print(f"[{class_color}]Issue: {classification_result.issue_summary}[/{class_color}]")
+                    
                     console.print(f"[bold cyan]{separator_line}[/bold cyan]")
                     console.print()
                 
@@ -471,7 +478,7 @@ def verify_references(input_path: str, output_file: str = None, output_format: s
                     if not verbose:
                         progress.update(
                             main_task,
-                            description=f"🔍 Processing references [{completed_count}/{len(references)}]",
+                            description=f"Processing references [{completed_count}/{len(references)}]",
                             completed=completed_count
                         )
                     
@@ -480,14 +487,15 @@ def verify_references(input_path: str, output_file: str = None, output_format: s
                         verified_references.append(result)
                     except Exception as e:
                         ref_index = future_to_ref[future]
-                        console.print(f"[red]❌ Error processing reference {ref_index}: {e}[/red]")
+                        console.print(f"[red][ERROR] Error processing reference {ref_index}: {e}[/red]")
                         
                         # Add error result
                         from verifier.classifier import VerificationResult, ClassificationResult
                         error_result = VerificationResult(
                             classification=ClassificationResult.INCONCLUSIVE,
                             confidence=0.0, similarity_score=0.0, matched_paper=None,
-                            reasons=[f'Processing error: {str(e)}'], details={}
+                            reasons=[f'Processing error: {str(e)}'], details={},
+                            issue_summary=f"ERROR: Processing failed - {str(e)}"
                         )
                         
                         verified_references.append({
@@ -503,7 +511,7 @@ def verify_references(input_path: str, output_file: str = None, output_format: s
     # Show individual paper results after parallel processing (non-verbose mode)
     if not verbose and verified_references:
         console.print("\n" + "="*80)
-        console.print("[bold blue]📊 Individual Reference Results[/bold blue]")
+        console.print("[bold blue]Individual Reference Results[/bold blue]")
         console.print("="*80)
         
         for result in verified_references:
@@ -517,9 +525,9 @@ def verify_references(input_path: str, output_file: str = None, output_format: s
                 if authors_preview:
                     # Display all authors without truncation
                     authors_str = ", ".join(authors_preview)
-                    console.print(f"   👥 {authors_str}")
+                    console.print(f"   Authors: {authors_str}")
                 
-                # Show classification
+                # Show classification with professional labels
                 classification_value = result['classification']
                 confidence = result['confidence']
                 
@@ -528,12 +536,17 @@ def verify_references(input_path: str, output_file: str = None, output_format: s
                     'author_manipulation': 'purple', 'fabricated': 'red', 'inconclusive': 'blue'
                 }.get(classification_value, 'white')
                 
-                class_emoji = {
-                    'authentic': '✅', 'suspicious': '🔍', 'fake': '❌',
-                    'author_manipulation': '🔄', 'fabricated': '🚫', 'inconclusive': '❓'
-                }.get(classification_value, '❓')
+                class_label = {
+                    'authentic': '[VERIFIED]', 'suspicious': '[SUSPICIOUS]', 'fake': '[FAKE]',
+                    'author_manipulation': '[AUTHOR ISSUE]', 'fabricated': '[NOT FOUND]', 'inconclusive': '[INCONCLUSIVE]'
+                }.get(classification_value, '[UNKNOWN]')
                 
-                console.print(f"   [{class_color}]{class_emoji} {classification_value.upper()} ({confidence*100:.1f}% confidence)[/{class_color}]")
+                console.print(f"   [{class_color}]{class_label} {classification_value.upper()} ({confidence*100:.1f}% confidence)[/{class_color}]")
+                
+                # Show issue summary if available - key for reviewers
+                classification_result = result.get('classification_result')
+                if classification_result and hasattr(classification_result, 'issue_summary') and classification_result.issue_summary:
+                    console.print(f"   [{class_color}]Issue: {classification_result.issue_summary}[/{class_color}]")
         
         console.print("\n" + "="*80)
     
@@ -573,17 +586,17 @@ def verify_references(input_path: str, output_file: str = None, output_format: s
         total_searches = current_cache_hits + current_cache_misses
         cache_hit_rate = (current_cache_hits / total_searches) * 100 if total_searches > 0 else 0
         
-        console.print(f"\n📊 [bold blue]Performance Statistics:[/bold blue]")
-        console.print(f"   🔍 Database searches: {total_searches}")
-        console.print(f"   📋 Cache hits: {current_cache_hits}")
-        console.print(f"   💾 Cache hit rate: {cache_hit_rate:.1f}%")
+        console.print(f"\n[bold blue]Performance Statistics:[/bold blue]")
+        console.print(f"   Database searches: {total_searches}")
+        console.print(f"   Cache hits: {current_cache_hits}")
+        console.print(f"   Cache hit rate: {cache_hit_rate:.1f}%")
         
         if cache_hit_rate > 0:
-            console.print(f"   ⚡ Time saved by caching!")
+            console.print(f"   Time saved by caching")
         
         # Show parallel processing benefit
         if not verbose and len(references) > 1:
-            console.print(f"   🚀 Parallel processing used for {len(references)} references")
+            console.print(f"   Parallel processing used for {len(references)} references")
         
         console.print()
     
@@ -591,17 +604,17 @@ def verify_references(input_path: str, output_file: str = None, output_format: s
     end_time = time.time()
     total_time = end_time - start_time
     
-    console.print(f"⏱️  [bold green]Total verification time: {total_time:.2f} seconds[/bold green]")
+    console.print(f"[bold green]Total verification time: {total_time:.2f} seconds[/bold green]")
     if len(references) > 1:
         time_per_ref = total_time / len(references)
-        console.print(f"   📈 Average per reference: {time_per_ref:.2f} seconds")
+        console.print(f"   Average per reference: {time_per_ref:.2f} seconds")
         
         # Estimate speed improvement from parallelization
         if not verbose:
             estimated_sequential = time_per_ref * len(references) * 1.5  # Rough estimate
             speed_improvement = estimated_sequential / total_time
             if speed_improvement > 1.2:
-                console.print(f"   🚀 Estimated {speed_improvement:.1f}x faster with parallel processing")
+                console.print(f"   Estimated {speed_improvement:.1f}x faster with parallel processing")
     console.print()
     
     # Output results
@@ -622,7 +635,7 @@ def apply_context_filtering(results: List[Dict[str, Any]], context_type: str, ve
         cs_sources = {"dblp", "arxiv", "semantic_scholar", "iacr", "crossref"}
         
         if verbose:
-            console.print("[dim cyan]🖥️ Applying Computer Science context filtering...[/dim cyan]")
+            console.print("[dim cyan]Applying Computer Science context filtering...[/dim cyan]")
         
         # Boost scores for CS-relevant results
         for paper in results:
@@ -668,7 +681,7 @@ def apply_context_filtering(results: List[Dict[str, Any]], context_type: str, ve
         bio_sources = {"pubmed", "semantic_scholar", "crossref"}
         
         if verbose:
-            console.print("[dim cyan]🧬 Applying Biomedical context filtering...[/dim cyan]")
+            console.print("[dim cyan]Applying Biomedical context filtering...[/dim cyan]")
         
         # Boost scores for biomedical-relevant results
         for paper in results:
@@ -717,7 +730,7 @@ def apply_context_filtering(results: List[Dict[str, Any]], context_type: str, ve
         if verbose:
             removed_count = len(results) - len(filtered_results)
             if removed_count > 0:
-                console.print(f"[dim yellow]📊 Filtered out {removed_count} papers with low context relevance[/dim yellow]")
+                console.print(f"[dim yellow]Filtered out {removed_count} papers with low context relevance[/dim yellow]")
         
         return filtered_results
     
@@ -726,7 +739,7 @@ def apply_context_filtering(results: List[Dict[str, Any]], context_type: str, ve
 def search_with_cs_priority(verifier: MultiDatabaseVerifier, search_ref: Dict[str, Any], verbose: bool = False) -> List[Dict[str, Any]]:
     """Search with Computer Science database priority"""
     if verbose:
-        console.print("[dim cyan]🖥️ Using Computer Science optimized search strategy...[/dim cyan]")
+        console.print("[dim cyan]Using Computer Science optimized search strategy...[/dim cyan]")
     
     all_results = []
     
@@ -741,14 +754,14 @@ def search_with_cs_priority(verifier: MultiDatabaseVerifier, search_ref: Dict[st
             all_results.extend(db_results[:limit])
             
             if verbose and len(db_results) > 0:
-                console.print(f"[dim]   📚 {db_name}: {len(db_results[:limit])}/{len(db_results)} results (CS priority)[/dim]")
+                console.print(f"[dim]   {db_name}: {len(db_results[:limit])}/{len(db_results)} results (CS priority)[/dim]")
     
     return all_results
 
 def search_with_bio_priority(verifier: MultiDatabaseVerifier, search_ref: Dict[str, Any], verbose: bool = False) -> List[Dict[str, Any]]:
     """Search with Biomedical database priority"""
     if verbose:
-        console.print("[dim cyan]🧬 Using Biomedical optimized search strategy...[/dim cyan]")
+        console.print("[dim cyan]Using Biomedical optimized search strategy...[/dim cyan]")
     
     all_results = []
     
@@ -763,7 +776,9 @@ def search_with_bio_priority(verifier: MultiDatabaseVerifier, search_ref: Dict[s
             all_results.extend(db_results[:limit])
             
             if verbose and len(db_results) > 0:
-                console.print(f"[dim]   📚 {db_name}: {len(db_results[:limit])}/{len(db_results)} results (Bio priority)[/dim]")
+                console.print(f"[dim]   {db_name}: {len(db_results[:limit])}/{len(db_results)} results (Bio priority)[/dim]")
+    
+    return all_results
     
     return all_results
 
@@ -778,20 +793,20 @@ def search_and_cite(query: str, context: str = "general", output_file: str = Non
     
     # Display context information
     context_display = {
-        "computer-science": "🖥️ Computer Science",
-        "biomedical": "🧬 Biomedical",
-        "general": "🔍 General"
+        "computer-science": "Computer Science",
+        "biomedical": "Biomedical",
+        "general": "General"
     }
     
-    console.print(f"🔍 Searching for papers matching: [bold cyan]{query}[/bold cyan]")
-    console.print(f"📚 Research Context: [bold yellow]{context_display[context_type]}[/bold yellow]")
+    console.print(f"Searching for papers matching: [bold cyan]{query}[/bold cyan]")
+    console.print(f"Research Context: [bold yellow]{context_display[context_type]}[/bold yellow]")
     console.print()
     
     # Initialize multi-database verifier with context-aware configuration
     try:
         verifier = MultiDatabaseVerifier()
     except Exception as e:
-        console.print(f"[red]❌ Failed to initialize verifier: {e}[/red]")
+        console.print(f"[red][ERROR] Failed to initialize verifier: {e}[/red]")
         return
     
     # Create search reference with context hints
@@ -813,13 +828,13 @@ def search_and_cite(query: str, context: str = "general", output_file: str = Non
             search_results = verifier.verify_reference(search_ref)
         
         if not search_results:
-            console.print("[yellow]⚠️ No papers found matching your query.[/yellow]")
+            console.print("[yellow][WARNING] No papers found matching your query.[/yellow]")
             if context_type != "general":
-                console.print(f"[dim]💡 Try switching to --context general for broader search[/dim]")
-            console.print("\n💡 Tips:")
-            console.print("  • Try different keywords")
-            console.print("  • Search for a more specific paper title")
-            console.print("  • Include author names in your query")
+                console.print(f"[dim]Tip: Try switching to --context general for broader search[/dim]")
+            console.print("\nTips:")
+            console.print("  - Try different keywords")
+            console.print("  - Search for a more specific paper title")
+            console.print("  - Include author names in your query")
             return
         
         # Apply context-aware filtering
@@ -827,8 +842,8 @@ def search_and_cite(query: str, context: str = "general", output_file: str = Non
             search_results = apply_context_filtering(search_results, context_type, verbose)
             
             if not search_results:
-                console.print("[yellow]⚠️ No context-relevant papers found.[/yellow]")
-                console.print(f"[dim]💡 Try --context general for broader results[/dim]")
+                console.print("[yellow][WARNING] No context-relevant papers found.[/yellow]")
+                console.print(f"[dim]Tip: Try --context general for broader results[/dim]")
                 return
         
         # Remove duplicates efficiently using dict to preserve order
@@ -876,7 +891,7 @@ def search_and_cite(query: str, context: str = "general", output_file: str = Non
                     selected_papers.append((paper, score))
         
         # Display results
-        console.print(f"📚 Found [bold green]{len(unique_papers_list)}[/bold green] unique papers across multiple databases")
+        console.print(f"Found [bold green]{len(unique_papers_list)}[/bold green] unique papers across multiple databases")
         console.print(f"Showing top [bold cyan]{len(selected_papers)}[/bold cyan] most relevant result{'s' if len(selected_papers) > 1 else ''}:\n")
         
         citations = []
@@ -908,18 +923,18 @@ def search_and_cite(query: str, context: str = "general", output_file: str = Non
             
             # Display paper info
             console.print(f"[bold cyan]{i}.[/bold cyan] {title}")
-            console.print(f"   👥 Authors: {author_str}")
-            console.print(f"   📅 Year: {year}")
-            console.print(f"   🏛️ Venue: {venue_display}")
-            console.print(f"   📊 Relevance Score: {score:.2f}")
+            console.print(f"   Authors: {author_str}")
+            console.print(f"   Year: {year}")
+            console.print(f"   Venue: {venue_display}")
+            console.print(f"   Relevance Score: {score:.2f}")
             if doi:
-                console.print(f"   🔗 DOI: {doi}")
+                console.print(f"   DOI: {doi}")
             
             # Generate BibTeX entry
             bibtex_key = f"paper{year}{i}" if year and str(year).isdigit() else f"paper{i}"
             bibtex_entry = generate_bibtex(paper, bibtex_key)
             
-            console.print(f"   📋 BibTeX:")
+            console.print(f"   BibTeX:")
             console.print(f"   [dim]{bibtex_entry}[/dim]")
             console.print()
             
@@ -932,22 +947,22 @@ def search_and_cite(query: str, context: str = "general", output_file: str = Non
         
         # Show database breakdown in verbose mode
         if verbose:
-            console.print("\n📊 Database Coverage:")
+            console.print("\nDatabase Coverage:")
             db_counts = {}
             for paper in search_results:
                 source = paper.get('source', 'unknown')
                 db_counts[source] = db_counts.get(source, 0) + 1
             
             for db_name, count in sorted(db_counts.items()):
-                console.print(f"   • {db_name}: {count} results")
+                console.print(f"   - {db_name}: {count} results")
         
         # Save results if requested
         if output_file:
             save_citation_results(citations, output_file, output_format)
-            console.print(f"\n💾 Results saved to: [bold green]{output_file}[/bold green]")
+            console.print(f"\nResults saved to: [bold green]{output_file}[/bold green]")
         
     except Exception as e:
-        console.print(f"[red]❌ Error during search: {e}[/red]")
+        console.print(f"[red][ERROR] Error during search: {e}[/red]")
         if verbose:
             console.print("[red]Error traceback:[/red]")
             console.print(traceback.format_exc())
@@ -1097,7 +1112,7 @@ def save_citation_results(citations: list, output_file: str, output_format: str 
                     
                     f.write(citation_block)
     except Exception as e:
-        console.print(f"[red]❌ Error saving results: {e}[/red]")
+        console.print(f"[red][ERROR] Error saving results: {e}[/red]")
 
 def main():
     """Main CLI entry point"""
@@ -1183,7 +1198,7 @@ Examples:
         if args.file:
             # Reference verification mode  
             if not Path(args.file).exists():
-                console.print(f"[red]❌ File not found: {args.file}[/red]")
+                console.print(f"[red][ERROR] File not found: {args.file}[/red]")
                 sys.exit(1)
             
             verify_references(args.file, args.output, args.output_format, args.verbose)
@@ -1195,14 +1210,14 @@ Examples:
             verify_flexible_input(args.verify, args.output, args.output_format, args.verbose)
         
     except KeyboardInterrupt:
-        console.print("\n[yellow]⚠️ Operation cancelled by user[/yellow]")
+        console.print("\n[yellow]Operation cancelled by user[/yellow]")
         sys.exit(1)
     except Exception as e:
         if args.verbose:
             console.print("[red]Error traceback:[/red]")
             console.print(traceback.format_exc())
         else:
-            console.print(f"[red]❌ Error: {e}[/red]")
+            console.print(f"[red][ERROR] Error: {e}[/red]")
         sys.exit(1)
 
 if __name__ == "__main__":

@@ -27,9 +27,9 @@ from .summary_data import get_verification_summary_data
 logger = logging.getLogger(__name__)
 
 def display_verification_summary(summary: Dict[str, Any], total_refs: int, console):
-    """Display a beautiful summary table of verification results in terminal"""
+    """Display a professional summary table of verification results in terminal"""
     
-    table = Table(title="[*] Verification Summary", box=box.ROUNDED)
+    table = Table(title="Verification Summary", box=box.ROUNDED)
     table.add_column("Classification", style="bold", min_width=24)
     table.add_column("Count", justify="right", min_width=5)
     table.add_column("Percentage", justify="right", min_width=10)
@@ -38,7 +38,7 @@ def display_verification_summary(summary: Dict[str, Any], total_refs: int, conso
     # Get shared summary data
     summary_data = get_verification_summary_data(summary)
     
-    # Add rows with colors and monochrome hacker-style symbols
+    # Add rows with colors and professional symbols (no emojis)
     for item in summary_data:
         color = item['color']
         count = item['count']
@@ -49,13 +49,18 @@ def display_verification_summary(summary: Dict[str, Any], total_refs: int, conso
             f"[{color}]{label}[/{color}]", 
             str(count), 
             f"{percentage:6.1f}%",
-            f"[{color}]●[/{color}]" if count > 0 else "[dim]○[/dim]"
+            f"[{color}]*[/{color}]" if count > 0 else "[dim]-[/dim]"
         )
     
     console.print()
     console.print(table)
     
-    # Overall assessment from classifier
-    risk_assessment = summary.get('risk_assessment', '🔍 Inconclusive - More investigation needed')
+    # Overall assessment from classifier (remove emojis)
+    risk_assessment = summary.get('risk_assessment', 'Inconclusive - More investigation needed')
+    # Strip any remaining emojis from risk assessment
+    import re
+    risk_assessment = re.sub(r'[^\x00-\x7F]+', '', risk_assessment).strip()
+    if risk_assessment.startswith('-'):
+        risk_assessment = risk_assessment[1:].strip()
     console.print(f"\n{risk_assessment}")
     console.print()

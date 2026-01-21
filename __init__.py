@@ -27,15 +27,12 @@ __author__ = "Author Name"
 __email__ = "author@example.com"
 __license__ = "GPLv3"
 
-# Import main functionality - handle as module in current directory
-try:
-    from verifyref import main
-except ImportError:
-    # Fallback for development/testing
-    import sys
-    import os
-    sys.path.insert(0, os.path.dirname(__file__))
-    from verifyref import main
+# Lazy import to avoid circular import issues
+def __getattr__(name):
+    if name == "main":
+        from . import verifyref
+        return verifyref.main
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __all__ = [
     "main",
