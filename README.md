@@ -2,7 +2,6 @@
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
 A tool for verifying the authenticity of academic references in PDF documents using multiple academic databases and optional AI-powered analysis.
 
@@ -140,28 +139,31 @@ python verifyref.py paper.pdf --enable-ai
 
 VerifyRef uses a 5-category system to evaluate reference authenticity:
 
-| Category | Criteria | Action |
-|----------|----------|--------|
-| AUTHENTIC | High similarity (>55%), multiple database matches | Accept |
-| SUSPICIOUS | Moderate similarity (25-55%), limited evidence | Manual review |
-| FABRICATED | Very low similarity (<25%), no database matches | Investigate |
-| AUTHOR_MANIPULATION | Title matches but authors differ significantly | Flag misconduct |
-| INCONCLUSIVE | Parsing errors, books, or network issues | Re-verify |
+| Category            | Criteria                                          | Action          |
+| ------------------- | ------------------------------------------------- | --------------- |
+| AUTHENTIC           | High similarity (>55%), multiple database matches | Accept          |
+| SUSPICIOUS          | Moderate similarity (25-55%), limited evidence    | Manual review   |
+| FABRICATED          | Very low similarity (<25%), no database matches   | Investigate     |
+| AUTHOR_MANIPULATION | Title matches but authors differ significantly    | Flag misconduct |
+| INCONCLUSIVE        | Parsing errors, books, or network issues          | Re-verify       |
 
 ## Database Integration
 
 **Primary Databases** (no API key required):
+
 - OpenAlex - Comprehensive coverage (200M+ works)
 - DBLP - Computer Science
 - IACR - Cryptography
 - ArXiv - Preprints
 
 **Enhanced with API Keys** (optional):
+
 - Semantic Scholar - Higher rate limits
 - PubMed - Biomedical (NCBI key)
 - Springer Nature - STM publications
 
 **Smart Fallback**:
+
 - Google Scholar - Used only when other databases find poor matches (<70% similarity)
 
 ## Configuration
@@ -210,16 +212,17 @@ verifyref/
 
 ## Troubleshooting
 
-| Issue | Solution |
-|-------|----------|
-| No references found | Check PDF quality, ensure GROBID is running |
-| GROBID not responding | `curl http://localhost:8070/api/isalive` |
-| High INCONCLUSIVE rate | Use `--rigor lenient` |
-| AI rate limits | Use Ollama (no limits) or wait for cooldown |
+| Issue                  | Solution                                    |
+| ---------------------- | ------------------------------------------- |
+| No references found    | Check PDF quality, ensure GROBID is running |
+| GROBID not responding  | `curl http://localhost:8070/api/isalive`  |
+| High INCONCLUSIVE rate | Use `--rigor lenient`                     |
+| AI rate limits         | Use Ollama (no limits) or wait for cooldown |
 
 ## Ethical Usage
 
 VerifyRef follows strict ethical guidelines:
+
 - API-only access (no web scraping)
 - Respects all service rate limits
 - No personal data collection
