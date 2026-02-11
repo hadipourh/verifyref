@@ -253,7 +253,7 @@ VerifyRef follows strict ethical guidelines:
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+See [contributing.md](contributing.md) for guidelines.
 
 ## License
 
@@ -263,9 +263,9 @@ Copyright (C) 2025-2026 Hosein Hadipour
 
 ## Documentation
 
-- [Technical Documentation](TECHNICAL_DOCUMENTATION.md) - Architecture and API reference
-- [Ethical Guidelines](ETHICAL_GUIDELINES.md) - Usage policies
-- [Contributing](CONTRIBUTING.md) - Development guidelines
+- [Technical Documentation](technical_documentation.md) - Architecture and API reference
+- [Ethical Guidelines](ethical_guidelines.md) - Usage policies
+- [Contributing](contributing.md) - Development guidelines
 
 ## Caution
 
