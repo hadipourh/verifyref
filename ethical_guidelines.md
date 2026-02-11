@@ -77,4 +77,4 @@ All database integrations comply with their respective terms of service:
 
 For ethical concerns or compliance questions, contact maintainers or consult your institution's research integrity office.
 
-**Version**: VerifyRef v1.2.0
+**Version**: VerifyRef v1.0.0

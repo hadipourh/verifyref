@@ -1,6 +1,6 @@
 # VerifyRef Technical Documentation
 
-**Version**: 1.2.0  
+**Version**: 1.0.0  
 **Last Updated**: February 2026  
 **Author**: Hosein Hadipour  
 **License**: GPL-3.0
