@@ -42,7 +42,16 @@ This tool helps reviewers quickly identify potentially fabricated references and
 
 ## Installation
 
-### Quick Start (No Docker Required)
+### From PyPI (Recommended)
+
+```bash
+pip install verifyref
+
+# Run verification
+verifyref paper.pdf -o results.txt
+```
+
+### From Source
 
 ```bash
 git clone https://github.com/hadipourh/verifyref.git
