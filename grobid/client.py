@@ -29,6 +29,10 @@ from config import GROBID_CONFIG
 
 logger = logging.getLogger(__name__)
 
+# GROBID server URLs for fallback chain
+GROBID_PUBLIC_SERVER = "https://kermitt2-grobid.hf.space"
+GROBID_LOCAL_SERVER = "http://localhost:8070"
+
 
 def clean_extracted_title(title: str) -> str:
     """
@@ -641,3 +645,156 @@ class GrobidClient:
             target = ptr_elem.get('target')
             if target:
                 reference['url'] = target
+
+
+class SmartGrobidClient:
+    """
+    Smart GROBID client with automatic fallback chain:
+    1. Try configured GROBID URL (public demo by default)
+    2. Try local GROBID (localhost:8070) if available
+    3. Fall back to PyMuPDF parser (lower accuracy) if all else fails
+    
+    This ensures VerifyRef always works, with graceful degradation.
+    """
+    
+    def __init__(self):
+        self.primary_url = GROBID_CONFIG["base_url"]
+        self.fallback_urls = []
+        
+        # Build fallback chain (avoid duplicates)
+        if self.primary_url != GROBID_PUBLIC_SERVER:
+            self.fallback_urls.append(GROBID_PUBLIC_SERVER)
+        if self.primary_url != GROBID_LOCAL_SERVER:
+            self.fallback_urls.append(GROBID_LOCAL_SERVER)
+        
+        self._active_client = None
+        self._active_source = None
+        self._fallback_parser = None
+    
+    def _get_fallback_parser(self):
+        """Lazy load fallback parser"""
+        if self._fallback_parser is None:
+            try:
+                from grobid.fallback_parser import get_fallback_parser
+                self._fallback_parser = get_fallback_parser()
+            except ImportError:
+                self._fallback_parser = None
+        return self._fallback_parser
+    
+    def _find_available_grobid(self) -> Optional[GrobidClient]:
+        """Find an available GROBID server from the fallback chain"""
+        
+        # Try primary URL first
+        urls_to_try = [self.primary_url] + self.fallback_urls
+        
+        for url in urls_to_try:
+            try:
+                client = GrobidClient(base_url=url)
+                if client.is_available():
+                    logger.info(f"Using GROBID server: {url}")
+                    self._active_source = url
+                    return client
+                else:
+                    logger.debug(f"GROBID not available at {url}")
+            except Exception as e:
+                logger.debug(f"Failed to connect to GROBID at {url}: {e}")
+        
+        return None
+    
+    def extract_references(self, pdf_path: str) -> Optional[List[Dict[str, Any]]]:
+        """
+        Extract references with automatic fallback.
+        
+        Returns:
+            List of references, or None if all methods fail
+        """
+        # Try GROBID servers first
+        if self._active_client is None:
+            self._active_client = self._find_available_grobid()
+        
+        if self._active_client:
+            try:
+                result = self._active_client.extract_references(pdf_path)
+                if result:
+                    return result
+            except Exception as e:
+                logger.warning(f"GROBID extraction failed: {e}")
+                # Reset client to try finding another
+                self._active_client = None
+                self._active_client = self._find_available_grobid()
+                if self._active_client:
+                    try:
+                        result = self._active_client.extract_references(pdf_path)
+                        if result:
+                            return result
+                    except:
+                        pass
+        
+        # All GROBID servers failed - try fallback parser
+        fallback = self._get_fallback_parser()
+        if fallback and fallback.is_available():
+            logger.warning("⚠️  GROBID unavailable - using fallback parser (lower accuracy)")
+            return fallback.extract_references(pdf_path)
+        
+        logger.error("All reference extraction methods failed. "
+                    "Install PyMuPDF for fallback: pip install PyMuPDF")
+        return None
+    
+    def parse_citation_string(self, citation_text: str) -> Optional[Dict[str, Any]]:
+        """
+        Parse a single citation string with automatic fallback.
+        """
+        # Try GROBID first
+        if self._active_client is None:
+            self._active_client = self._find_available_grobid()
+        
+        if self._active_client:
+            try:
+                result = self._active_client.parse_citation_string(citation_text)
+                if result:
+                    return result
+            except Exception as e:
+                logger.warning(f"GROBID citation parsing failed: {e}")
+        
+        # Fallback to regex parser
+        fallback = self._get_fallback_parser()
+        if fallback and fallback.is_available():
+            logger.debug("Using fallback parser for citation")
+            return fallback.parse_citation_string(citation_text)
+        
+        return None
+    
+    def is_available(self) -> bool:
+        """Check if any extraction method is available"""
+        # Check GROBID
+        if self._active_client is None:
+            self._active_client = self._find_available_grobid()
+        
+        if self._active_client:
+            return True
+        
+        # Check fallback
+        fallback = self._get_fallback_parser()
+        return fallback is not None and fallback.is_available()
+    
+    def get_active_source(self) -> str:
+        """Return which source is being used for extraction"""
+        if self._active_client:
+            return f"GROBID ({self._active_source})"
+        
+        fallback = self._get_fallback_parser()
+        if fallback and fallback.is_available():
+            return "PyMuPDF Fallback (lower accuracy)"
+        
+        return "None available"
+
+
+# Convenience function to get the smart client
+_smart_client = None
+
+def get_smart_client() -> SmartGrobidClient:
+    """Get or create the smart GROBID client with fallback support"""
+    global _smart_client
+    if _smart_client is None:
+        _smart_client = SmartGrobidClient()
+    return _smart_client

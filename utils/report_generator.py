@@ -259,6 +259,32 @@ def generate_human_readable_report(results: Dict[str, Any], classifier=None) -> 
         if issue_summary:
             report_lines.append(f"Issue: {issue_summary}")
         
+        # RETRACTION WARNING - Critical new feature
+        retraction_info = None
+        if classification_result:
+            if hasattr(classification_result, 'retraction_info'):
+                retraction_info = classification_result.retraction_info
+            elif isinstance(classification_result, dict):
+                retraction_info = classification_result.get('retraction_info')
+        
+        if retraction_info and retraction_info.get('retracted'):
+            report_lines.append("")
+            report_lines.append("!" * 60)
+            report_lines.append("[CRITICAL WARNING] THIS PAPER HAS BEEN RETRACTED")
+            report_lines.append("!" * 60)
+            retraction_type = retraction_info.get('retraction_type', 'Retraction')
+            report_lines.append(f"Retraction Type: {retraction_type}")
+            if retraction_info.get('retraction_doi'):
+                report_lines.append(f"Retraction Notice DOI: {retraction_info['retraction_doi']}")
+            if retraction_info.get('retraction_date'):
+                report_lines.append(f"Retraction Date: {retraction_info['retraction_date']}")
+            if retraction_info.get('original_doi'):
+                report_lines.append(f"Original Paper DOI: {retraction_info['original_doi']}")
+            report_lines.append("")
+            report_lines.append("Citing retracted papers may compromise research integrity.")
+            report_lines.append("Please verify and consider removing or replacing this citation.")
+            report_lines.append("!" * 60)
+        
         # AUTHOR-FRIENDLY SUGGESTIONS - Help authors fix their references
         suggestions = _generate_author_suggestions(
             classification, parsed, verification_results, classification_result

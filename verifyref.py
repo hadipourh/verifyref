@@ -45,7 +45,7 @@ from rich import box
 
 # Import our modules
 from config import validate_config, get_config, DATABASE_CONFIG, CLASSIFICATION_CONFIG
-from grobid.client import GrobidClient
+from grobid.client import GrobidClient, get_smart_client
 from extractor.reference_parser import ReferenceParser
 from verifier.semantic_scholar import SemanticScholarClient
 from verifier.multi_database_verifier import MultiDatabaseVerifier
@@ -201,7 +201,7 @@ def verify_references(input_path: str, output_file: str = None, output_format: s
     
     # Initialize components with fast mode for better performance
     config = get_config()
-    grobid_client = GrobidClient()
+    grobid_client = get_smart_client()  # Smart client with automatic fallback
     parser = ReferenceParser()
     verifier = MultiDatabaseVerifier(fast_mode=True)  # Enable fast mode for better performance
     

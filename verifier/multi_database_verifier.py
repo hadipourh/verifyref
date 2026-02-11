@@ -18,6 +18,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 
 import logging
+import threading
 from typing import Dict, List, Optional, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
@@ -166,26 +167,53 @@ class MultiDatabaseVerifier:
             logger.error(f"Error searching {db_name}: {e}")
             return (db_name, [])
     
-    def search_across_databases(self, query_info: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
+    def search_across_databases(self, query_info: Dict[str, Any], early_exit: bool = False, 
+                                  similarity_threshold: float = 0.9) -> Dict[str, List[Dict[str, Any]]]:
         """
         Search for papers across all enabled databases in parallel
         
         Args:
             query_info: Dictionary with search parameters (title, authors, year, venue)
+            early_exit: If True, stop searching once a high-confidence match is found
+            similarity_threshold: Minimum similarity score to consider a "match" for early exit
             
         Returns:
             Dictionary mapping database names to their search results
         """
         results = {}
+        found_match = threading.Event()  # Signal for early exit
+        failed_dbs = []  # Track failed databases for potential retry
         
         # Parallel database search - each API is independent with its own rate limits
         # This dramatically speeds up searches (from ~15-20s to ~3-5s)
         max_workers = min(len(self.clients), 8)  # Limit concurrent connections
         
+        def search_with_early_exit(db_name: str, client: Any) -> tuple:
+            """Search a database, checking for early exit signal"""
+            if early_exit and found_match.is_set():
+                logger.debug(f"Skipping {db_name} - match already found (early exit)")
+                return (db_name, [], 'skipped')
+            
+            try:
+                db_name, db_results = self._search_single_database(db_name, client, query_info)
+                
+                # Check if we found a high-confidence match
+                if early_exit and db_results:
+                    for result in db_results:
+                        if self._is_high_confidence_match(result, query_info, similarity_threshold):
+                            found_match.set()  # Signal other threads to stop
+                            logger.debug(f"High-confidence match found in {db_name}, signaling early exit")
+                            break
+                
+                return (db_name, db_results, 'success')
+            except Exception as e:
+                logger.warning(f"Search failed for {db_name}: {e}")
+                return (db_name, [], 'failed')
+        
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Submit all database searches in parallel
             futures = {
-                executor.submit(self._search_single_database, db_name, client, query_info): db_name
+                executor.submit(search_with_early_exit, db_name, client): db_name
                 for db_name, client in self.clients.items()
             }
             
@@ -193,11 +221,96 @@ class MultiDatabaseVerifier:
             for future in as_completed(futures):
                 db_name = futures[future]
                 try:
-                    name, db_results = future.result(timeout=30)  # 30s timeout per database
+                    name, db_results, status = future.result(timeout=30)  # 30s timeout per database
                     results[name] = db_results
+                    if status == 'failed':
+                        failed_dbs.append(name)
                 except Exception as e:
                     logger.error(f"Error getting results from {db_name}: {e}")
                     results[db_name] = []
+                    failed_dbs.append(db_name)
+        
+        # Store failed databases for potential retry
+        results['_failed_dbs'] = failed_dbs
+        
+        return results
+    
+    def _is_high_confidence_match(self, result: Dict[str, Any], query_info: Dict[str, Any], 
+                                   threshold: float = 0.9) -> bool:
+        """
+        Check if a result is a high-confidence match for early exit
+        
+        Args:
+            result: Database search result
+            query_info: Original query parameters
+            threshold: Minimum similarity score
+            
+        Returns:
+            True if result is a high-confidence match
+        """
+        try:
+            from utils.helpers import calculate_text_similarity
+            
+            query_title = query_info.get('title', '').lower().strip()
+            result_title = (result.get('title', '') or '').lower().strip()
+            
+            if not query_title or not result_title:
+                return False
+            
+            # Calculate title similarity
+            title_similarity = calculate_text_similarity(query_title, result_title)
+            
+            # High confidence if title matches well AND has DOI
+            if title_similarity >= threshold:
+                if result.get('doi'):
+                    return True  # Very high confidence - title match + DOI
+                
+                # Check author overlap for additional confidence
+                query_authors = query_info.get('authors', [])
+                result_authors = result.get('authors', [])
+                if query_authors and result_authors:
+                    # Simple first author check
+                    if query_authors[0].lower().split()[-1] in str(result_authors).lower():
+                        return True
+            
+            return False
+            
+        except Exception as e:
+            logger.debug(f"Error checking match confidence: {e}")
+            return False
+    
+    def retry_failed_databases(self, query_info: Dict[str, Any], 
+                               failed_dbs: List[str], 
+                               longer_timeout: int = 45) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Retry searches for databases that failed or timed out
+        
+        Args:
+            query_info: Dictionary with search parameters
+            failed_dbs: List of database names that failed
+            longer_timeout: Longer timeout for retry attempts
+            
+        Returns:
+            Dictionary with retry results
+        """
+        results = {}
+        
+        for db_name in failed_dbs:
+            if db_name not in self.clients:
+                continue
+            
+            client = self.clients[db_name]
+            logger.info(f"Retrying {db_name} with longer timeout...")
+            
+            try:
+                # Give the database more time on retry
+                time.sleep(0.5)  # Brief pause before retry
+                name, db_results = self._search_single_database(db_name, client, query_info)
+                results[name] = db_results
+                logger.info(f"Retry successful for {db_name}: {len(db_results)} results")
+            except Exception as e:
+                logger.warning(f"Retry failed for {db_name}: {e}")
+                results[db_name] = []
         
         return results
     

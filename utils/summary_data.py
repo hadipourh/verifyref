@@ -62,4 +62,16 @@ def get_verification_summary_data(summary: Dict[str, Any]) -> List[Dict[str, Any
         }
     ]
     
+    # Add retracted papers if any exist
+    retracted_count = summary.get('retracted_papers', 0)
+    if retracted_count > 0:
+        total = summary.get('total_references', 1)
+        retracted_percentage = (retracted_count / total) * 100 if total > 0 else 0
+        summary_data.insert(1, {  # Insert after AUTHENTIC
+            'label': '[!!] RETRACTED',
+            'count': retracted_count,
+            'percentage': retracted_percentage,
+            'color': 'bright_red'
+        })
+    
     return summary_data

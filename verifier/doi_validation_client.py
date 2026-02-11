@@ -359,6 +359,181 @@ class DOIValidationClient:
         
         return 'Unknown Publisher'
 
+    def check_retraction(self, doi: str) -> Dict[str, Any]:
+        """
+        Check if a paper with given DOI has been retracted using CrossRef API.
+        
+        CrossRef includes Retraction Watch database data since 2023.
+        
+        Args:
+            doi: DOI string to check
+            
+        Returns:
+            Dict with retraction status and details
+        """
+        if not doi:
+            return {'retracted': False, 'error': None}
+        
+        clean_doi = self._clean_doi(doi)
+        if not clean_doi:
+            return {'retracted': False, 'error': 'Invalid DOI format'}
+        
+        url = f"https://api.crossref.org/works/{clean_doi}"
+        headers = {
+            "User-Agent": "VerifyRef/1.0 (Academic Reference Verification; mailto:verifyref@example.com)"
+        }
+        
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                work = data.get('message', {})
+                
+                # Check for update-to relations indicating retraction
+                update_to = work.get('update-to', [])
+                for update in update_to:
+                    update_type = update.get('type', '').lower()
+                    if update_type in ['retraction', 'removal']:
+                        return {
+                            'retracted': True,
+                            'retraction_doi': update.get('DOI'),
+                            'retraction_date': update.get('updated', {}).get('date-time') if isinstance(update.get('updated'), dict) else None,
+                            'retraction_type': update.get('type', 'Retraction').title(),
+                            'error': None
+                        }
+                
+                # Also check the relation field for retractions
+                relation = work.get('relation', {})
+                is_retracted_by = relation.get('is-retracted-by', [])
+                if is_retracted_by:
+                    retraction = is_retracted_by[0]
+                    return {
+                        'retracted': True,
+                        'retraction_doi': retraction.get('id'),
+                        'retraction_date': None,
+                        'retraction_type': 'Retraction',
+                        'error': None
+                    }
+                
+                # Check for expression of concern
+                has_expression_of_concern = relation.get('has-expression-of-concern', [])
+                if has_expression_of_concern:
+                    concern = has_expression_of_concern[0]
+                    return {
+                        'retracted': True,
+                        'retraction_doi': concern.get('id'),
+                        'retraction_date': None,
+                        'retraction_type': 'Expression of Concern',
+                        'error': None
+                    }
+                
+                return {'retracted': False, 'error': None}
+                
+            elif response.status_code == 404:
+                # DOI not found in CrossRef - can't check retraction status
+                return {'retracted': False, 'error': None}
+            else:
+                return {'retracted': False, 'error': f'CrossRef lookup failed: HTTP {response.status_code}'}
+                
+        except requests.exceptions.Timeout:
+            return {'retracted': False, 'error': 'Retraction check timed out'}
+        except requests.exceptions.RequestException as e:
+            return {'retracted': False, 'error': f'Retraction check failed: {e}'}
+    
+    def check_retraction_by_title(self, title: str, threshold: float = 0.95) -> Dict[str, Any]:
+        """
+        Check if a paper has been retracted by searching CrossRef by title.
+        
+        Searches CrossRef's retraction database (includes Retraction Watch) by title.
+        Uses fuzzy matching to verify the found paper matches the reference.
+        
+        Args:
+            title: Paper title to search for
+            threshold: Similarity threshold for title matching (default 0.95)
+            
+        Returns:
+            Dict with retraction status and details
+        """
+        if not title or len(title) < 10:
+            return {'retracted': False, 'error': None}
+        
+        # Search CrossRef for retracted papers matching this title
+        encoded_title = quote(title)
+        url = f"https://api.crossref.org/works?query.title={encoded_title}&filter=has-update:true&rows=5"
+        headers = {
+            "User-Agent": "VerifyRef/1.0 (Academic Reference Verification; mailto:verifyref@example.com)"
+        }
+        
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                items = data.get('message', {}).get('items', [])
+                
+                for item in items:
+                    item_title = item.get('title', [''])[0] if isinstance(item.get('title'), list) else item.get('title', '')
+                    if not item_title:
+                        continue
+                    
+                    # Check for fuzzy title match
+                    similarity = self._calculate_title_similarity(title, item_title)
+                    if similarity >= threshold:
+                        # Found a matching paper - check if it's retracted
+                        update_to = item.get('update-to', [])
+                        for update in update_to:
+                            update_type = update.get('type', '').lower()
+                            if update_type in ['retraction', 'removal']:
+                                return {
+                                    'retracted': True,
+                                    'original_doi': item.get('DOI'),
+                                    'retraction_doi': update.get('DOI'),
+                                    'retraction_date': update.get('updated', {}).get('date-time') if isinstance(update.get('updated'), dict) else None,
+                                    'retraction_type': update.get('type', 'Retraction').title(),
+                                    'error': None
+                                }
+                        
+                        # Check relation field
+                        relation = item.get('relation', {})
+                        is_retracted_by = relation.get('is-retracted-by', [])
+                        if is_retracted_by:
+                            retraction = is_retracted_by[0]
+                            return {
+                                'retracted': True,
+                                'original_doi': item.get('DOI'),
+                                'retraction_doi': retraction.get('id'),
+                                'retraction_date': None,
+                                'retraction_type': 'Retraction',
+                                'error': None
+                            }
+                        
+                        # Check for expression of concern
+                        has_expression_of_concern = relation.get('has-expression-of-concern', [])
+                        if has_expression_of_concern:
+                            concern = has_expression_of_concern[0]
+                            return {
+                                'retracted': True,
+                                'original_doi': item.get('DOI'),
+                                'retraction_doi': concern.get('id'),
+                                'retraction_date': None,
+                                'retraction_type': 'Expression of Concern',
+                                'error': None
+                            }
+                
+                return {'retracted': False, 'error': None}
+                
+            elif response.status_code == 404:
+                return {'retracted': False, 'error': None}
+            else:
+                return {'retracted': False, 'error': f'CrossRef search failed: HTTP {response.status_code}'}
+                
+        except requests.exceptions.Timeout:
+            return {'retracted': False, 'error': 'Retraction search timed out'}
+        except requests.exceptions.RequestException as e:
+            return {'retracted': False, 'error': f'Retraction search failed: {e}'}
+
+
 # Example usage functions for integration
 
 def validate_reference_dois(references: list) -> dict:
@@ -377,6 +552,7 @@ def validate_reference_dois(references: list) -> dict:
         'references_with_dois': 0,
         'valid_dois': 0,
         'invalid_dois': 0,
+        'retracted_papers': 0,
         'validation_details': []
     }
     
@@ -388,6 +564,11 @@ def validate_reference_dois(references: list) -> dict:
             
             if validation['valid']:
                 results['valid_dois'] += 1
+                # Also check for retraction
+                retraction = client.check_retraction(doi)
+                if retraction.get('retracted'):
+                    results['retracted_papers'] += 1
+                    validation['retraction_info'] = retraction
             else:
                 results['invalid_dois'] += 1
             

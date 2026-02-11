@@ -31,24 +31,38 @@ This tool helps reviewers quickly identify potentially fabricated references and
 
 ## Features
 
-- **Multi-Database Verification**: Cross-references across 8+ academic databases
-- **PDF Processing**: Extracts and parses references from academic PDFs using GROBID
-- **AI-Powered Analysis**: Optional verification using free (Gemini, Groq, Ollama) or paid (OpenAI) AI providers
-- **Author Manipulation Detection**: Detects when real paper titles are used with fake authors
-- **Book Reference Handling**: Recognizes books/textbooks that may not appear in paper databases
-- **Parallel Processing**: Efficient verification with multi-threaded database queries
-- **Flexible Output**: JSON and text format support with detailed reporting
+- Multi-database verification across 8+ academic databases
+- PDF processing using GROBID (works out of the box with public server)
+- Retraction detection via CrossRef and Retraction Watch
+- Author manipulation detection (real titles with fake authors)
+- Optional AI verification using free (Gemini, Groq, Ollama) or paid (OpenAI) providers
+- Book reference handling for textbooks that may not appear in paper databases
+- Parallel processing with multi-threaded database queries
+- JSON and text output formats
 
 ## Installation
 
-### Docker (Recommended)
+### Quick Start (No Docker Required)
+
+```bash
+git clone https://github.com/hadipourh/verifyref.git
+cd verifyref
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+# Run verification (uses public GROBID server automatically)
+python verifyref.py paper.pdf -o results.txt
+```
+
+### Docker Installation
 
 ```bash
 git clone https://github.com/hadipourh/verifyref.git
 cd verifyref
 docker build -t verifyref .
 
-# Interactive mode (GROBID starts automatically)
+# Interactive mode
 docker run -it --rm -v "$(pwd):/app/workspace" verifyref
 
 # Inside the container:
@@ -56,27 +70,17 @@ cd /app/workspace/
 verifyref paper.pdf -o results.txt
 ```
 
-### Manual Installation
+### Local GROBID (Optional)
+
+For faster processing or privacy, run GROBID locally:
 
 ```bash
-git clone https://github.com/hadipourh/verifyref.git
-cd verifyref
-
-# Create virtual environment
-python3 -m venv .venv
-source .venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Configure (edit config.py to set CROSSREF_EMAIL)
-
-# Start GROBID (for PDF processing)
 docker run -d -p 8070:8070 lfoppiano/grobid:0.8.2
-
-# Run verification
-python verifyref.py paper.pdf -o results.txt
+export GROBID_URL="http://localhost:8070"
+python verifyref.py paper.pdf
 ```
+
+VerifyRef automatically detects and uses local GROBID when available.
 
 ## Usage
 
@@ -105,7 +109,7 @@ python verifyref.py paper.pdf --rigor lenient   # High recall
 python verifyref.py --cite "cryptanalysis" --context cs
 python verifyref.py --cite "gene therapy" --context bio
 
-# AI-enhanced verification (requires API key or Ollama)
+# AI-enhanced verification
 python verifyref.py paper.pdf --enable-ai
 
 # Verbose output
@@ -119,19 +123,19 @@ VerifyRef supports multiple AI providers. Ollama is recommended for unlimited fr
 ```bash
 # Option 1: Ollama (free, local, no rate limits)
 brew install ollama
-ollama serve  # In one terminal
-ollama pull llama3.2  # In another terminal
+ollama serve
+ollama pull llama3.2
 export AI_PROVIDER="ollama"
 python verifyref.py paper.pdf --enable-ai
 
 # Option 2: Google Gemini (free tier)
 export AI_PROVIDER="gemini"
-export GOOGLE_GEMINI_API_KEY="your-key"  # Get from https://aistudio.google.com/app/apikey
+export GOOGLE_GEMINI_API_KEY="your-key"
 python verifyref.py paper.pdf --enable-ai
 
 # Option 3: Groq (free tier)
 export AI_PROVIDER="groq"
-export GROQ_API_KEY="your-key"  # Get from https://console.groq.com/keys
+export GROQ_API_KEY="your-key"
 python verifyref.py paper.pdf --enable-ai
 ```
 
@@ -147,6 +151,8 @@ VerifyRef uses a 5-category system to evaluate reference authenticity:
 | AUTHOR_MANIPULATION | Title matches but authors differ significantly    | Flag misconduct |
 | INCONCLUSIVE        | Parsing errors, books, or network issues          | Re-verify       |
 
+Retracted papers are flagged with a warning regardless of classification.
+
 ## Database Integration
 
 **Primary Databases** (no API key required):
@@ -155,6 +161,7 @@ VerifyRef uses a 5-category system to evaluate reference authenticity:
 - DBLP - Computer Science
 - IACR - Cryptography
 - ArXiv - Preprints
+- CrossRef - DOI metadata and retraction status
 
 **Enhanced with API Keys** (optional):
 
@@ -189,6 +196,20 @@ ENABLE_CROSSREF = True
 ENABLE_GOOGLE_SCHOLAR = True
 ```
 
+### GROBID Configuration
+
+VerifyRef uses a smart fallback chain for PDF processing:
+
+1. Public GROBID server (default, no setup required)
+2. Local GROBID (if running on localhost:8070)
+3. PyMuPDF fallback (lower accuracy, used when GROBID unavailable)
+
+Override the default GROBID URL:
+
+```bash
+export GROBID_URL="http://localhost:8070"
+```
+
 ## Project Structure
 
 ```
@@ -196,13 +217,15 @@ verifyref/
 ├── verifyref.py              # CLI entry point
 ├── config.py                 # Configuration
 ├── grobid/
-│   └── client.py             # PDF extraction
+│   ├── client.py             # GROBID client with smart fallback
+│   └── fallback_parser.py    # PyMuPDF fallback parser
 ├── extractor/
 │   └── reference_parser.py   # Reference parsing
 ├── verifier/
 │   ├── multi_database_verifier.py
 │   ├── classifier.py         # Classification logic
 │   ├── ai_verifier.py        # AI verification
+│   ├── doi_validation_client.py  # DOI and retraction checking
 │   └── *_client.py           # Database clients
 └── utils/
     ├── helpers.py
@@ -212,12 +235,12 @@ verifyref/
 
 ## Troubleshooting
 
-| Issue                  | Solution                                    |
-| ---------------------- | ------------------------------------------- |
-| No references found    | Check PDF quality, ensure GROBID is running |
-| GROBID not responding  | `curl http://localhost:8070/api/isalive`  |
-| High INCONCLUSIVE rate | Use `--rigor lenient`                     |
-| AI rate limits         | Use Ollama (no limits) or wait for cooldown |
+| Issue                  | Solution                                         |
+| ---------------------- | ------------------------------------------------ |
+| No references found    | Check PDF quality; try a different PDF           |
+| GROBID timeout         | Public server may be busy; try local GROBID      |
+| High INCONCLUSIVE rate | Use `--rigor lenient`                            |
+| AI rate limits         | Use Ollama (no limits) or wait for cooldown      |
 
 ## Ethical Usage
 

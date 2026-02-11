@@ -115,8 +115,12 @@ except ImportError:
     pass
 
 # GROBID Configuration
+# Options for GROBID server:
+#   1. Local Docker: "http://localhost:8070" (requires: docker run -p 8070:8070 grobid/grobid:0.8.0)
+#   2. Public demo:  "https://kermitt2-grobid.hf.space" (free, no setup required, may be slower)
+# Set GROBID_URL environment variable or change the default below
 GROBID_CONFIG = {
-    "base_url": os.getenv("GROBID_URL", "http://localhost:8070"),
+    "base_url": os.getenv("GROBID_URL", "https://kermitt2-grobid.hf.space"),
     "timeout": int(os.getenv("GROBID_TIMEOUT", "300")),  # Increased timeout for better processing
     "max_retries": int(os.getenv("GROBID_MAX_RETRIES", "3")),
     

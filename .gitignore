@@ -71,9 +71,8 @@ output.txt
 results.json
 results.txt
 *.pdf
-!sample.pdf
+!boomeyong.pdf
 demo_*.py
-test_*.py
 *_fixed.py
 *_backup.py
 temp/

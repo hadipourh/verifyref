@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from utils.helpers import calculate_text_similarity, normalize_text
-from utils.academic_matching import calculate_venue_similarity, calculate_author_similarity
+from utils.academic_matching import calculate_venue_similarity, calculate_author_similarity, clean_author_name
 from config import CLASSIFICATION_CONFIG
 import config
 
@@ -49,6 +49,7 @@ class VerificationResult:
     reasons: List[str]
     details: Dict[str, Any]
     issue_summary: str = ""  # Brief description of the issue for reviewers
+    retraction_info: Optional[Dict[str, Any]] = None  # Retraction status from CrossRef
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert VerificationResult to JSON-serializable dictionary"""
@@ -59,8 +60,14 @@ class VerificationResult:
             'matched_paper': self.matched_paper,
             'reasons': self.reasons,
             'details': self.details,
-            'issue_summary': self.issue_summary
+            'issue_summary': self.issue_summary,
+            'retraction_info': self.retraction_info
         }
+    
+    @property
+    def is_retracted(self) -> bool:
+        """Check if the referenced paper has been retracted"""
+        return self.retraction_info is not None and self.retraction_info.get('retracted', False)
 
 class ReferenceClassifier:
     """
@@ -234,8 +241,8 @@ class ReferenceClassifier:
             if title_sim > 0.7 and author_sim < 0.4:
                 ref_authors = extracted_ref.get('authors', [])
                 db_authors = best_match.get('authors', [])
-                # Convert db_authors to strings if they're dicts
-                db_author_names = [a.get('name', str(a)) if isinstance(a, dict) else str(a) for a in db_authors]
+                # Convert db_authors to strings if they're dicts and clean DBLP disambiguation numbers
+                db_author_names = [clean_author_name(a.get('name', str(a)) if isinstance(a, dict) else str(a)) for a in db_authors]
                 
                 # Add AI verification to author manipulation results
                 ai_verification = self._get_ai_verification(extracted_ref, search_results)
@@ -704,7 +711,9 @@ class ReferenceClassifier:
             # Show specific author mismatch
             if best_match:
                 db_authors = best_match.get('authors', [])
-                db_authors_str = ', '.join(db_authors[:3]) if db_authors else 'Unknown'
+                # Clean DBLP disambiguation numbers like "0001" from author names
+                db_authors_cleaned = [clean_author_name(a.get('name', str(a)) if isinstance(a, dict) else str(a)) for a in db_authors]
+                db_authors_str = ', '.join(db_authors_cleaned[:3]) if db_authors_cleaned else 'Unknown'
                 ref_authors_str = ', '.join(ref_authors[:3]) if ref_authors else 'Unknown'
                 return f"AUTHOR MISMATCH: Title matches but authors differ. Reference lists [{ref_authors_str}], database shows [{db_authors_str}]."
             return "AUTHOR MISMATCH: Title found but authors do not match the database record."
@@ -808,10 +817,17 @@ class ReferenceClassifier:
         avg_similarity = sum(r.similarity_score for r in results) / total_refs
         avg_confidence = sum(r.confidence for r in results) / total_refs
         
+        # Count retracted papers (NEW: from Retraction Watch integration)
+        retracted_count = sum(
+            1 for r in results 
+            if r.retraction_info is not None and r.retraction_info.get('retracted', False)
+        )
+        
         return {
             "total_references": total_refs,
             "classification_counts": classification_counts,
             "percentages": percentages,
+            "retracted_papers": retracted_count,  # NEW: Track retracted papers
             "statistics": {
                 "average_similarity_score": round(avg_similarity, 3),
                 "average_confidence": round(avg_confidence, 3),
@@ -822,7 +838,8 @@ class ReferenceClassifier:
                 percentages["authentic"], 
                 percentages["fake"], 
                 percentages["suspicious"], 
-                percentages["total_fraud"]
+                percentages["total_fraud"],
+                retracted_count  # Pass retracted count to risk assessment
             )
         }
     
@@ -1049,6 +1066,8 @@ class ReferenceClassifier:
                         logger.info(f"Google Scholar validation inconclusive: {validation_result.get('evidence', 'Unknown reason')}")
                         cryptodb_details['google_scholar_validation'] = validation_result
                 
+                # Clean DBLP disambiguation numbers like "0001" from author names
+                paper_authors_cleaned = [clean_author_name(a) for a in paper_authors]
                 return VerificationResult(
                     classification=ClassificationResult.AUTHOR_MANIPULATION,
                     confidence=confidence,
@@ -1063,12 +1082,12 @@ class ReferenceClassifier:
                         "fraud_type": fraud_type,
                         "title_similarity": title_sim,
                         "author_similarity": author_sim,
-                        "original_authors": paper_authors,
+                        "original_authors": paper_authors_cleaned,
                         "claimed_authors": ref_authors,
                         "cryptodb_verification": cryptodb_details,
                         "threshold_used": self.author_manipulation_threshold
                     },
-                    issue_summary=f"AUTHOR MISMATCH: Title matches but authors differ significantly. Reference claims [{', '.join(ref_authors[:3])}], database shows [{', '.join(paper_authors[:3])}]."
+                    issue_summary=f"AUTHOR MISMATCH: Title matches but authors differ significantly. Reference claims [{', '.join(ref_authors[:3])}], database shows [{', '.join(paper_authors_cleaned[:3])}]."
                 )
         
         return None
@@ -1176,6 +1195,8 @@ class ReferenceClassifier:
         # If we have a DOI, validate it and check metadata matches to prevent fraudulent DOI usage
         extracted_doi = extracted_ref.get('doi', '').strip()
         doi_validation_result = None
+        retraction_info = None  # Track retraction status
+        
         if extracted_doi and self.doi_client:
             # Use enhanced metadata validation instead of simple resolution check
             doi_validation_result = self.doi_client.validate_doi_metadata_match(
@@ -1185,6 +1206,18 @@ class ReferenceClassifier:
                 extracted_ref.get('year'),
                 extracted_ref.get('venue', '')
             )
+            
+            # NEW: Check for paper retraction via CrossRef Retraction Watch database
+            retraction_info = self.doi_client.check_retraction(extracted_doi)
+            if retraction_info.get('retracted'):
+                retraction_type = retraction_info.get('retraction_type', 'Retraction')
+                retraction_doi = retraction_info.get('retraction_doi', '')
+                reasons.append(f"[CRITICAL] RETRACTED PAPER: This paper has been {retraction_type}")
+                if retraction_doi:
+                    reasons.append(f"Retraction notice DOI: {retraction_doi}")
+                if retraction_info.get('retraction_date'):
+                    reasons.append(f"Retraction date: {retraction_info['retraction_date']}")
+                reasons.append("WARNING: Citing retracted papers may compromise research integrity")
             
             if doi_validation_result.get('metadata_valid', False):
                 # DOI resolves AND metadata matches - very strong evidence of authenticity
@@ -1229,6 +1262,20 @@ class ReferenceClassifier:
                 error_msg = doi_validation_result.get('error', 'Unknown error')
                 reasons.append(f"[WARNING] DOI validation failed: {extracted_doi} - {error_msg}")
                 # Don't immediately classify as fake - could be temporary resolution issue
+        
+        # For papers without DOI, try title-based retraction check
+        if not retraction_info and self.doi_client:
+            ref_title = extracted_ref.get('title', '').strip()
+            if ref_title and len(ref_title) > 20:
+                title_retraction = self.doi_client.check_retraction_by_title(ref_title)
+                if title_retraction.get('retracted'):
+                    retraction_info = title_retraction
+                    retraction_type = retraction_info.get('retraction_type', 'Retraction')
+                    original_doi = retraction_info.get('original_doi', '')
+                    reasons.append(f"[CRITICAL] RETRACTED PAPER: This paper has been {retraction_type}")
+                    if original_doi:
+                        reasons.append(f"Original paper DOI: {original_doi}")
+                    reasons.append("WARNING: Citing retracted papers may compromise research integrity")
         
         # Authentic classification using configurable threshold
         if similarity_score >= self.similarity_threshold:
@@ -1362,8 +1409,27 @@ class ReferenceClassifier:
             
             return ClassificationResult.FABRICATED, confidence, reasons
     
-    def _assess_overall_risk(self, authentic_pct: float, fake_pct: float, suspicious_pct: float, fraud_pct: float) -> str:
+    def _assess_overall_risk(self, authentic_pct: float, fake_pct: float, suspicious_pct: float, 
+                             fraud_pct: float, retracted_count: int = 0) -> str:
         """Assess overall risk level based on classification percentages including new fraud types"""
+        # First check for retracted papers - always flag them
+        if retracted_count > 0:
+            if retracted_count == 1:
+                retraction_warning = f"[WARNING] {retracted_count} paper has been RETRACTED"
+            else:
+                retraction_warning = f"[WARNING] {retracted_count} papers have been RETRACTED"
+            
+            # Combine with fraud assessment
+            if fraud_pct > 15 or fake_pct > 20:
+                return f"{retraction_warning}. [CRITICAL] Significant fraud detected (author manipulation or fabrication)"
+            elif fraud_pct > 5 or fake_pct > 10 or suspicious_pct > 30:
+                return f"{retraction_warning}. [HIGH RISK] Notable fraud or suspicious references detected"
+            elif fraud_pct > 0 or fake_pct > 5 or suspicious_pct > 15:
+                return f"{retraction_warning}. [MEDIUM RISK] Some concerning references require investigation"
+            else:
+                return f"{retraction_warning}. Citing retracted papers may compromise research integrity"
+        
+        # Standard risk assessment without retractions
         if fraud_pct > 15 or fake_pct > 20:
             return "[CRITICAL] Significant fraud detected (author manipulation or fabrication)"
         elif fraud_pct > 5 or fake_pct > 10 or suspicious_pct > 30:

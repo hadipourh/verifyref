@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "verifyref"
-version = "1.0.0"
-description = "Academic reference verification with AI-powered fraud detection"
+version = "1.2.0"
+description = "Academic reference verification tool with multi-database search and AI-powered fraud detection"
 readme = "README.md"
 license = "GPL-3.0-or-later"
 requires-python = ">=3.8"
@@ -22,6 +22,7 @@ keywords = [
     "research",
     "pdf",
     "grobid",
+    "retraction",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -42,14 +43,19 @@ classifiers = [
 ]
 dependencies = [
     "requests>=2.28.0,<3.0.0",
-    "openai>=1.0.0,<2.0.0",
     "feedparser>=6.0.10,<7.0.0",
     "rich>=13.0.0,<14.0.0",
     "scholarly>=1.7.11,<2.0.0",
     "python-dotenv>=1.0.0,<2.0.0",
+    "PyMuPDF>=1.23.0",
 ]
 
 [project.optional-dependencies]
+ai = [
+    "openai>=1.0.0,<2.0.0",
+    "google-generativeai>=0.3.0",
+    "groq>=0.4.0",
+]
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
@@ -74,8 +80,38 @@ Repository = "https://github.com/hadipourh/verifyref.git"
 Issues = "https://github.com/hadipourh/verifyref/issues"
 Changelog = "https://github.com/hadipourh/verifyref/releases"
 
-[tool.hatch.build.targets.wheel]
-packages = ["."]
+[tool.hatch.build.targets.sdist]
+include = [
+    "/verifyref.py",
+    "/config.py",
+    "/exceptions.py",
+    "/__init__.py",
+    "/grobid/",
+    "/extractor/",
+    "/verifier/",
+    "/utils/",
+    "/README.md",
+    "/LICENSE",
+    "/requirements.txt",
+]
+exclude = [
+    "*.pdf",
+    "__pycache__/",
+    ".git/",
+    ".venv/",
+]
+
+[tool.hatch.build]
+include = [
+    "verifyref.py",
+    "config.py",
+    "exceptions.py",
+    "__init__.py",
+    "grobid/*.py",
+    "extractor/*.py", 
+    "verifier/*.py",
+    "utils/*.py",
+]
 exclude = [
     "test/",
     "tests/",

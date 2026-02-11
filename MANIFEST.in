@@ -1,14 +1,14 @@
 include README.md
 include LICENSE
-include LICENSE_HEADER.txt
 include requirements.txt
 include .env.example
 include ETHICAL_GUIDELINES.md
 include CONTRIBUTING.md
+include TECHNICAL_DOCUMENTATION.md
+recursive-include grobid *.py
 recursive-include extractor *.py
 recursive-include verifier *.py
 recursive-include utils *.py
-recursive-include tests *.py
 recursive-exclude * __pycache__
 recursive-exclude * *.py[co]
 recursive-exclude * *.pyc

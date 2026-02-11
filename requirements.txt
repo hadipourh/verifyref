@@ -19,3 +19,4 @@ scholarly>=1.7.11,<2.0.0
 
 # Environment variable management
 python-dotenv>=1.0.0,<2.0.0
+PyMuPDF>=1.23.0  # Fallback PDF parser when GROBID unavailable

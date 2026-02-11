@@ -1,11 +1,9 @@
 # VerifyRef Technical Documentation
 
-**Version**: 1.1.0  
-**Last Updated**: January 2026  
+**Version**: 1.2.0  
+**Last Updated**: February 2026  
 **Author**: Hosein Hadipour  
 **License**: GPL-3.0
-
----
 
 ## Table of Contents
 
@@ -17,8 +15,6 @@
 6. [AI Verification](#ai-verification)
 7. [Configuration](#configuration)
 8. [API Reference](#api-reference)
-
----
 
 ## Architecture Overview
 
@@ -35,25 +31,28 @@ VerifyRef is a modular academic reference verification tool that combines multi-
               +------------------------------+------------------------------+
               |                              |                              |
     +---------v---------+        +-----------v-----------+        +--------v--------+
-    |   grobid/client   |        | verifier/multi_db     |        | utils/output    |
-    |   (PDF Parsing)   |        | (Database Coordinator)|        | (Report Gen)    |
+    | grobid/client.py  |        | verifier/multi_db     |        | utils/output    |
+    | (Smart PDF Parse) |        | (Database Coordinator)|        | (Report Gen)    |
     +-------------------+        +-----------+-----------+        +-----------------+
-                                             |
-         +-----------------------------------+-----------------------------------+
-         |           |           |           |           |           |           |
-    +----v----+ +----v----+ +----v----+ +----v----+ +----v----+ +----v----+ +----v----+
-    |OpenAlex | |  DBLP   | | PubMed  | |  IACR   | |  ArXiv  | |CrossRef | | Scholar |
-    +---------+ +---------+ +---------+ +---------+ +---------+ +---------+ +---------+
+              |                              |
+              v                              |
+    +-------------------+    +---------------+---------------+
+    | fallback_parser   |    |       Database Clients        |
+    | (PyMuPDF backup)  |    +-------------------------------+
+    +-------------------+    | OpenAlex | DBLP | PubMed | ...|
+                             +---------------+---------------+
                                              |
                                     +--------v--------+
                                     |   classifier    |
                                     | (Fraud Detect)  |
                                     +--------+--------+
                                              |
-                                    +--------v--------+
-                                    |   ai_verifier   |
-                                    |   (Optional)    |
-                                    +-----------------+
+                              +--------------+--------------+
+                              |                             |
+                     +--------v--------+           +--------v--------+
+                     | doi_validation  |           |   ai_verifier   |
+                     | (Retraction)    |           |   (Optional)    |
+                     +-----------------+           +-----------------+
 ```
 
 ### Design Principles
@@ -63,8 +62,6 @@ VerifyRef is a modular academic reference verification tool that combines multi-
 3. **Fail-Safe Operation**: Graceful degradation when services are unavailable
 4. **Configurable Sensitivity**: Adjustable thresholds for different use cases
 5. **Multi-Provider AI**: Support for free (Gemini, Groq, Ollama) and paid (OpenAI) AI providers
-
----
 
 ## Core Components
 
@@ -80,36 +77,47 @@ The main entry point handles:
 - `verify_references()`: Main verification pipeline
 - `search_and_cite()`: Citation lookup and BibTeX generation
 - `detect_input_type()`: Determines input format
-- `process_single_reference()`: Processes one reference through the pipeline
 
 ### 2. PDF Processing (grobid/client.py)
 
-GROBID client for extracting references from PDF documents.
+Smart GROBID client with automatic fallback chain.
 
-**Features**:
-- Connects to GROBID service (default: localhost:8070)
-- Extracts structured reference data (title, authors, venue, year, DOI)
-- Title post-processing to clean HTML artifacts (e.g., `sup+/sup` to `+`)
-- Two-pass parsing: preserves original authors before consolidation for fraud detection
+**Fallback Chain**:
+1. Public GROBID server (kermitt2-grobid.hf.space) - default, no setup
+2. Local GROBID (localhost:8070) - faster, private
+3. PyMuPDF fallback (grobid/fallback_parser.py) - lower accuracy (~75%)
 
-**Key Methods**:
+**Key Classes**:
 ```python
 class GrobidClient:
+    """Standard GROBID client for a single server"""
     def extract_references(pdf_path: str) -> List[Dict]
     def parse_citation_string(citation_text: str) -> Dict
     def is_available() -> bool
+
+class SmartGrobidClient:
+    """Client with automatic fallback chain"""
+    def extract_references(pdf_path: str) -> List[Dict]
+    def get_active_source() -> str  # Returns which backend is in use
 ```
 
-### 3. Reference Parser (extractor/reference_parser.py)
+**Features**:
+- Connects to GROBID service
+- Extracts structured reference data (title, authors, venue, year, DOI)
+- Title post-processing to clean HTML artifacts
+- Two-pass parsing: preserves original authors before consolidation
 
-Parses and normalizes reference data from various formats.
+### 3. Fallback Parser (grobid/fallback_parser.py)
 
-**Responsibilities**:
-- Text file parsing (one reference per line)
-- Single reference string parsing
-- Author name normalization
-- Year extraction from various formats
-- Venue name cleaning
+Lightweight PDF reference parser using PyMuPDF when GROBID is unavailable.
+
+**Accuracy**: ~75% (vs GROBID's ~95%)
+
+**Features**:
+- Reference section detection
+- Basic author/title/year extraction
+- DOI and arXiv ID extraction
+- No external service required
 
 ### 4. Multi-Database Verifier (verifier/multi_database_verifier.py)
 
@@ -117,9 +125,10 @@ Coordinates searches across multiple academic databases.
 
 **Features**:
 - Parallel database queries with thread pool
+- Early exit when high-confidence match found
 - Smart caching to avoid duplicate searches
+- Retry mechanism for failed databases
 - Context-aware database prioritization (CS, Bio, General)
-- Configurable database enable/disable
 
 **Search Priority by Context**:
 - **CS**: OpenAlex, DBLP, IACR, Semantic Scholar, ArXiv
@@ -141,12 +150,23 @@ Determines reference authenticity based on search results.
 | INCONCLUSIVE | Unable to determine (parsing errors, etc.) |
 
 **Key Features**:
-- Weighted similarity scoring (title: 0.45, author: 0.35, venue: 0.15, year: 0.05)
-- Explicit author manipulation detection
-- Book reference detection (ISBN, publisher, edition indicators)
-- DOI validation for false negative reduction
+- Weighted similarity scoring
+- Author manipulation detection
+- Book reference detection
+- DOI validation
+- Retraction status checking
 
-### 6. AI Verifier (verifier/ai_verifier.py)
+### 6. DOI Validation (verifier/doi_validation_client.py)
+
+DOI resolution and retraction detection.
+
+**Features**:
+- DOI metadata retrieval from CrossRef
+- Retraction status checking via CrossRef
+- Title-based retraction search via Retraction Watch
+- Publisher and metadata validation
+
+### 7. AI Verifier (verifier/ai_verifier.py)
 
 Optional AI-powered verification using multiple providers.
 
@@ -159,21 +179,13 @@ Optional AI-powered verification using multiple providers.
 | Groq | Free | Yes | 30 req/min |
 | OpenAI | Paid | Yes | Varies |
 
-**Analysis Includes**:
-- Pattern recognition for fake references
-- Author collaboration plausibility
-- Venue-topic consistency
-- Timeline analysis
-
----
-
 ## Data Flow
 
 ### Reference Verification Pipeline
 
 ```
 1. Input Detection
-   - PDF: GROBID extraction
+   - PDF: Smart GROBID client (with fallback)
    - Text file: Line-by-line parsing
    - Single ref: Direct parsing
 
@@ -184,13 +196,14 @@ Optional AI-powered verification using multiple providers.
 
 3. Database Search (Parallel)
    - Query all enabled databases
-   - Collect results with source attribution
-   - Cache results for duplicate references
+   - Early exit on high-confidence match (>90%)
+   - Retry failed databases once
 
 4. Classification
    - Find best match by similarity score
    - Check for author manipulation
    - Detect book references
+   - Check retraction status
    - Apply classification rules
 
 5. AI Verification (Optional)
@@ -222,20 +235,6 @@ Optional AI-powered verification using multiple providers.
 }
 ```
 
-**Search Result**:
-```python
-{
-    'title': str,
-    'authors': List[str],
-    'year': int,
-    'venue': str,
-    'doi': str,
-    'url': str,
-    'source': str,  # Database name
-    'similarity': float
-}
-```
-
 **Classification Result**:
 ```python
 @dataclass
@@ -247,9 +246,8 @@ class VerificationResult:
     reasons: List[str]
     details: Dict
     issue_summary: str
+    retraction_info: Optional[Dict]  # Retraction status if applicable
 ```
-
----
 
 ## Database Clients
 
@@ -313,11 +311,9 @@ DOI registration and metadata.
 
 Smart fallback with rate limiting.
 
-- **Usage**: Only when other databases find poor matches (less than 70% similarity)
+- **Usage**: Only when other databases find poor matches (<70% similarity)
 - **Rate Limit**: Conservative (20s delay, 10 req/hour)
 - **Purpose**: Author manipulation validation
-
----
 
 ## Classification System
 
@@ -351,6 +347,14 @@ Triggered when:
 
 This catches cases where someone copies a real paper title but changes the authors.
 
+### Retraction Detection
+
+References are checked against:
+- CrossRef retraction metadata (via DOI)
+- Retraction Watch database (via title search)
+
+Retracted papers are flagged with a warning regardless of other classification.
+
 ### Book Reference Detection
 
 References are flagged as potential books when they contain:
@@ -360,8 +364,6 @@ References are flagged as potential books when they contain:
 - Book-style titles (Handbook of, Introduction to, etc.)
 
 Books are classified as INCONCLUSIVE rather than FABRICATED since they may not appear in paper databases.
-
----
 
 ## AI Verification
 
@@ -386,21 +388,6 @@ export AI_PROVIDER="openai"
 export OPENAI_API_KEY="your-key"
 ```
 
-### AI Analysis Output
-
-The AI verifier returns:
-
-```python
-@dataclass
-class AIVerificationResult:
-    is_authentic: bool
-    confidence: float  # 0.0 to 1.0
-    reasoning: str
-    red_flags: List[str]
-    positive_indicators: List[str]
-    metadata: Dict
-```
-
 ### Integration with Classification
 
 AI results are incorporated with configurable weight:
@@ -408,13 +395,18 @@ AI results are incorporated with configurable weight:
 - Weak database evidence: 50% AI weight
 - AI cannot override clear database evidence without exceptional confidence (>95%)
 
----
-
 ## Configuration
 
 ### config.py Structure
 
 ```python
+# GROBID Configuration
+GROBID_CONFIG = {
+    "base_url": "https://kermitt2-grobid.hf.space",  # Public server default
+    "timeout": 300,
+    "max_retries": 3,
+}
+
 # Database enable/disable
 ENABLE_CROSSREF = True
 ENABLE_GOOGLE_SCHOLAR = True
@@ -438,18 +430,24 @@ CLASSIFICATION_CONFIG = {
     "venue_weight": 0.15,
     "year_weight": 0.05,
 }
-
-# AI configuration
-DATABASE_CONFIG = {
-    "ai_verification": {
-        "enabled": False,  # Enable with --enable-ai flag
-        "provider": "gemini",
-        "model": "gemini-2.0-flash",
-    }
-}
 ```
 
-### Runtime Configuration
+### Environment Variables
+
+```bash
+# GROBID server URL (overrides config)
+export GROBID_URL="http://localhost:8070"
+
+# AI provider selection
+export AI_PROVIDER="ollama"
+
+# API keys
+export GOOGLE_GEMINI_API_KEY="..."
+export GROQ_API_KEY="..."
+export OPENAI_API_KEY="..."
+```
+
+### Runtime Options
 
 ```bash
 # Rigor levels
@@ -463,8 +461,6 @@ DATABASE_CONFIG = {
 # Enable AI
 --enable-ai
 ```
-
----
 
 ## API Reference
 
@@ -491,12 +487,13 @@ Options:
 ### Python API
 
 ```python
+from grobid.client import get_smart_client
 from verifier.multi_database_verifier import MultiDatabaseVerifier
 from verifier.classifier import ReferenceClassifier
-from grobid.client import GrobidClient
 
-# Extract references from PDF
-grobid = GrobidClient()
+# Extract references from PDF (with automatic fallback)
+grobid = get_smart_client()
+print(f"Using: {grobid.get_active_source()}")
 references = grobid.extract_references("paper.pdf")
 
 # Search databases
@@ -509,9 +506,9 @@ for ref in references:
     classification = classifier.classify_reference(ref, results)
     
     print(f"{ref['title']}: {classification.classification}")
+    if classification.retraction_info:
+        print(f"  WARNING: Paper may be retracted")
 ```
-
----
 
 ## File Structure
 
@@ -520,13 +517,16 @@ verifyref/
 ├── verifyref.py              # CLI entry point
 ├── config.py                 # Configuration
 ├── grobid/
-│   └── client.py             # GROBID PDF processing
+│   ├── __init__.py
+│   ├── client.py             # GROBID client + SmartGrobidClient
+│   └── fallback_parser.py    # PyMuPDF fallback parser
 ├── extractor/
 │   └── reference_parser.py   # Reference parsing
 ├── verifier/
 │   ├── multi_database_verifier.py
 │   ├── classifier.py         # Classification logic
 │   ├── ai_verifier.py        # AI verification
+│   ├── doi_validation_client.py  # DOI + retraction checking
 │   ├── openalex_client.py
 │   ├── dblp_client.py
 │   ├── pubmed_client.py
@@ -535,8 +535,7 @@ verifyref/
 │   ├── semantic_scholar.py
 │   ├── crossref_client.py
 │   ├── google_scholar_client.py
-│   ├── springer_client.py
-│   └── doi_validation_client.py
+│   └── springer_client.py
 ├── utils/
 │   ├── helpers.py            # Common utilities
 │   ├── academic_matching.py  # Similarity algorithms
@@ -548,8 +547,6 @@ verifyref/
 └── test/
     └── test.txt              # Test references
 ```
-
----
 
 ## Development
 
@@ -585,8 +582,6 @@ python verifyref.py test/test.txt -o test_results.txt
 # Test single reference
 python verifyref.py --verify "Author, A.: Title. Venue, 2024"
 ```
-
----
 
 ## License
 
