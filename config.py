@@ -356,13 +356,14 @@ DATABASE_CONFIG = {
 # Reference Classification Configuration
 CLASSIFICATION_CONFIG = {
     # Core similarity thresholds (0.0 to 1.0)
-    "similarity_threshold": float(os.getenv("SIMILARITY_THRESHOLD", "0.55")),  # INCREASED: Main threshold for authentic classification
-    "suspicious_threshold": float(os.getenv("SUSPICIOUS_THRESHOLD", "0.25")),   # INCREASED: Below this = fabricated/fake
+    # REDUCED thresholds to decrease false positives - papers with minor metadata issues should not be flagged
+    "similarity_threshold": float(os.getenv("SIMILARITY_THRESHOLD", "0.50")),  # REDUCED: Lower bar for authentic (was 0.55)
+    "suspicious_threshold": float(os.getenv("SUSPICIOUS_THRESHOLD", "0.20")),   # REDUCED: Fewer papers marked fabricated (was 0.25)
     
     # Feature weights (must sum to 1.0)
-    # NOTE: Author weight increased for better fraud detection - critical to catch author manipulation
-    "title_weight": float(os.getenv("TITLE_WEIGHT", "0.45")),    # Title similarity importance (reduced from 0.6)
-    "author_weight": float(os.getenv("AUTHOR_WEIGHT", "0.35")),  # Author similarity importance (increased from 0.2)
+    # NOTE: Title weight increased as it's most reliable; author weight reduced due to name format variations
+    "title_weight": float(os.getenv("TITLE_WEIGHT", "0.55")),    # Title similarity importance (increased - most reliable signal)
+    "author_weight": float(os.getenv("AUTHOR_WEIGHT", "0.25")),  # Author similarity importance (reduced - name variations cause FPs)
     "venue_weight": float(os.getenv("VENUE_WEIGHT", "0.15")),    # Venue similarity importance
     "year_weight": float(os.getenv("YEAR_WEIGHT", "0.05")),      # Year similarity importance
     "max_year_difference": int(os.getenv("MAX_YEAR_DIFFERENCE", "3")),  # Max acceptable year difference
@@ -378,8 +379,12 @@ CLASSIFICATION_CONFIG = {
     
     # Classification confidence adjustments
     "authentic_confidence_boost": float(os.getenv("AUTHENTIC_BOOST", "0.1")),    # Extra confidence for authentic
-    "fraud_confidence_boost": float(os.getenv("FRAUD_BOOST", "0.1")),           # Extra confidence for fraud detection
-    "inconclusive_threshold": float(os.getenv("INCONCLUSIVE_THRESHOLD", "0.15")), # Very low similarity threshold
+    "fraud_confidence_boost": float(os.getenv("FRAUD_BOOST", "0.05")),           # REDUCED: Less aggressive fraud confidence (was 0.1)
+    "inconclusive_threshold": float(os.getenv("INCONCLUSIVE_THRESHOLD", "0.25")), # INCREASED: More papers get INCONCLUSIVE vs FABRICATED (was 0.15)
+    
+    # Confidence dampening for harsh classifications (reduces false positives)
+    "max_fabricated_confidence": float(os.getenv("MAX_FABRICATED_CONF", "0.70")),  # Never exceed this for FABRICATED without multiple signals
+    "require_multiple_signals_for_fraud": os.getenv("REQUIRE_MULTI_FRAUD_SIGNALS", "true").lower() == "true",  # Require 2+ reasons for fraud
 }
 
 # Output Configuration

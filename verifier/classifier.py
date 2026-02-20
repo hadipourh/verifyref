@@ -201,13 +201,17 @@ class ReferenceClassifier:
             # Try AI verification even with no database results
             ai_verification = self._get_ai_verification(extracted_ref, search_results)
             return VerificationResult(
-                classification=ClassificationResult.FABRICATED,  # Changed: No results = likely fabricated
-                confidence=0.8,  # High confidence in fabrication if no DB has it
+                classification=ClassificationResult.INCONCLUSIVE,  # Changed: No results = inconclusive (reduces false positives)
+                confidence=0.5,  # Moderate confidence - we simply couldn't verify
                 similarity_score=0.0,
                 matched_paper=None,
-                reasons=["Reference not found in any academic database - likely fabricated"],
-                details={"search_attempted": True, "results_count": 0, "fraud_type": "fabricated", "ai_verification": ai_verification.to_dict() if ai_verification else None},
-                issue_summary="NOT FOUND: This reference was not found in any academic database. It may be fabricated, misspelled, or from a non-indexed venue."
+                reasons=[
+                    "Reference not found in searched academic databases",
+                    "This may be a new paper not yet indexed, from a specialized venue, or contain extraction errors",
+                    "Manual verification recommended"
+                ],
+                details={"search_attempted": True, "results_count": 0, "verification_status": "not_found", "ai_verification": ai_verification.to_dict() if ai_verification else None},
+                issue_summary="NOT FOUND: This reference was not found in searched databases. It may be new, from a specialized venue, or contain extraction errors. Please verify manually."
             )
         
         # Enhanced fraud detection
@@ -237,8 +241,10 @@ class ReferenceClassifier:
             title_sim = self._calculate_title_similarity(extracted_ref, best_match)
             author_sim = self._calculate_author_similarity(extracted_ref, best_match)
             
-            # High title similarity (>0.7) but very low author similarity (<0.4) = author manipulation
-            if title_sim > 0.7 and author_sim < 0.4:
+            # High title similarity (>0.8) but very low author similarity (<0.3) = potential author manipulation
+            # INCREASED title threshold from 0.7 to 0.8 and DECREASED author threshold from 0.4 to 0.3
+            # to reduce false positives from name format variations
+            if title_sim > 0.8 and author_sim < 0.3:
                 ref_authors = extracted_ref.get('authors', [])
                 db_authors = best_match.get('authors', [])
                 # Convert db_authors to strings if they're dicts and clean DBLP disambiguation numbers
@@ -705,7 +711,7 @@ class ReferenceClassifier:
             return f"VERIFIED: Reference confirmed in {', '.join(sources[:3])}. Title, authors, and metadata match."
         
         elif classification == ClassificationResult.FABRICATED:
-            return f"NOT FOUND: This reference was not found in any academic database. It may be fabricated, misspelled, or from a non-indexed venue."
+            return f"NOT FOUND: This reference was not found in searched databases. Please verify manually - it may be new, from a specialized venue, or have extraction errors."
         
         elif classification == ClassificationResult.AUTHOR_MANIPULATION:
             # Show specific author mismatch
@@ -715,13 +721,13 @@ class ReferenceClassifier:
                 db_authors_cleaned = [clean_author_name(a.get('name', str(a)) if isinstance(a, dict) else str(a)) for a in db_authors]
                 db_authors_str = ', '.join(db_authors_cleaned[:3]) if db_authors_cleaned else 'Unknown'
                 ref_authors_str = ', '.join(ref_authors[:3]) if ref_authors else 'Unknown'
-                return f"AUTHOR MISMATCH: Title matches but authors differ. Reference lists [{ref_authors_str}], database shows [{db_authors_str}]."
-            return "AUTHOR MISMATCH: Title found but authors do not match the database record."
+                return f"AUTHOR MISMATCH: Title matches but authors differ. Reference lists [{ref_authors_str}], database shows [{db_authors_str}]. Please verify."
+            return "AUTHOR MISMATCH: Title found but authors do not match the database record. Please verify."
         
         elif classification == ClassificationResult.FAKE:
             if similarity_score > 0.3:
-                return f"METADATA MISMATCH: Similar paper found but significant discrepancies in title, authors, or venue (similarity: {similarity_score*100:.0f}%)."
-            return "LIKELY FAKE: Very low similarity to any known papers. Reference may be completely fabricated."
+                return f"NEEDS VERIFICATION: Similar paper found but with differences in title, authors, or venue (similarity: {similarity_score*100:.0f}%). Please check manually."
+            return "NEEDS VERIFICATION: Low similarity to known papers. Could be extraction error or specialized venue. Please verify manually."
         
         elif classification == ClassificationResult.SUSPICIOUS:
             issues = []
@@ -742,7 +748,7 @@ class ReferenceClassifier:
             return f"NEEDS REVIEW: Moderate confidence match (similarity: {similarity_score*100:.0f}%). Some metadata may be incorrect."
         
         elif classification == ClassificationResult.INCONCLUSIVE:
-            return "INCONCLUSIVE: Unable to definitively verify or refute this reference. May require manual verification."
+            return "NEEDS MANUAL REVIEW: Unable to verify this reference automatically. Please check using publisher website, Google Scholar, or other sources."
         
         return ""
 
@@ -1001,7 +1007,8 @@ class ReferenceClassifier:
             
             # High title similarity but very low author similarity = potential author manipulation
             # Use configurable threshold for title similarity
-            if title_sim > self.author_manipulation_threshold and author_sim < 0.3:  # Increased from 0.2 to 0.3
+            # INCREASED author_sim threshold from 0.3 to 0.25 to reduce FPs from name variations
+            if title_sim > self.author_manipulation_threshold and author_sim < 0.25:
                 
                 # Additional checks to avoid false positives:
                 
@@ -1010,20 +1017,25 @@ class ReferenceClassifier:
                     continue
                 
                 # 2. Check if this is a well-known/established paper (multiple database matches)
+                # REDUCED from 3 to 2 databases to be less strict
                 database_sources = set(r.get('source', 'unknown') for r in search_results)
-                if len(database_sources) >= 3:  # Found in 3+ databases = likely legitimate
+                if len(database_sources) >= 2:  # Found in 2+ databases = likely legitimate
                     continue
                 
-                # 3. Check for different levels of author manipulation
-                if author_sim < 0.1:  # Almost completely different authors
+                # 3. NEW: Check if title similarity is extremely high - likely same paper with name format issues
+                if title_sim > 0.95:
+                    continue  # Nearly identical titles are almost certainly the same paper
+                
+                # 4. Check for different levels of author manipulation - RAISED thresholds
+                if author_sim < 0.05:  # Almost completely different authors (was 0.1)
                     fraud_type = "severe_author_manipulation"
-                    confidence = 0.9 + self.fraud_confidence_boost
-                elif author_sim < 0.2:  # Significantly different authors  
+                    confidence = 0.85 + self.fraud_confidence_boost  # Reduced from 0.9
+                elif author_sim < 0.15:  # Significantly different authors (was 0.2)
                     fraud_type = "author_manipulation"
-                    confidence = 0.85 + self.fraud_confidence_boost
+                    confidence = 0.75 + self.fraud_confidence_boost  # Reduced from 0.85
                 else:  # Moderately different authors
                     fraud_type = "possible_author_manipulation" 
-                    confidence = 0.75 + self.fraud_confidence_boost
+                    confidence = 0.65 + self.fraud_confidence_boost  # Reduced from 0.75
                     
                 # Enhanced verification with CryptoDB for crypto papers
                 cryptodb_details = {}
@@ -1111,7 +1123,8 @@ class ReferenceClassifier:
         num_databases = len(databases)
         
         # Authoritative databases that are sufficient on their own for high-quality matches
-        authoritative_databases = {'dblp', 'pubmed', 'ieee', 'acm', 'springer'}
+        # EXPANDED: Added crossref, scopus for broader coverage and fewer false positives
+        authoritative_databases = {'dblp', 'pubmed', 'ieee', 'acm', 'springer', 'crossref', 'scopus', 'arxiv', 'semantic_scholar', 'openalex'}
         found_authoritative = databases.intersection(authoritative_databases)
         
         # For high similarity scores, prefer multiple database confirmation
@@ -1158,12 +1171,13 @@ class ReferenceClassifier:
         databases = set(r.get('source', 'unknown') for r in search_results)
         num_databases = len(databases)
         
-        # CRITICAL: Check if major databases found nothing
-        major_databases = {'openalex', 'semantic_scholar', 'dblp', 'pubmed', 'arxiv', 'iacr'}
+        # Check if major databases found results - be conservative if not
+        major_databases = {'openalex', 'semantic_scholar', 'dblp', 'pubmed', 'arxiv', 'iacr', 'crossref'}
         found_in_major_db = any(db in major_databases for db in databases)
         
-        # If no major database found anything AND similarity is low, likely fabricated
-        if not found_in_major_db and similarity_score < 0.5:
+        # If no major database found anything AND similarity is low, flag for manual review
+        # CHANGED: Use INCONCLUSIVE instead of FABRICATED to reduce false positives
+        if not found_in_major_db and similarity_score < 0.4:  # REDUCED threshold from 0.5
             # Use Google Scholar validation if available for final confirmation
             if self.google_scholar_client and self.google_scholar_client.should_validate_fabrication_suspicion(list(databases), similarity_score):
                 validation_result = self.google_scholar_client.validate_fabrication_suspicion(
@@ -1173,11 +1187,12 @@ class ReferenceClassifier:
                 )
                 
                 if validation_result.get('validated') == True:
-                    # Google Scholar confirms fabrication
+                    # Google Scholar confirms paper not found - still use SUSPICIOUS not FABRICATED
                     reasons.append("No major academic databases found this reference")
                     reasons.append(f"Low similarity score ({similarity_score:.2f}) with partial matches only")
-                    reasons.append(f"Google Scholar validation confirms: {validation_result.get('evidence', 'Paper not found')}")
-                    return ClassificationResult.FABRICATED, 0.85, reasons
+                    reasons.append(f"Google Scholar validation: {validation_result.get('evidence', 'Paper not found')}")
+                    reasons.append("Manual verification strongly recommended")
+                    return ClassificationResult.SUSPICIOUS, 0.65, reasons  # Changed from FABRICATED 0.85
                 elif validation_result.get('validated') == False:
                     # Google Scholar found the paper - continue with normal classification
                     reasons.append(f"Google Scholar validation found legitimate paper: {validation_result.get('evidence', 'Paper exists')}")
@@ -1185,11 +1200,12 @@ class ReferenceClassifier:
                     # Inconclusive Google Scholar result
                     reasons.append(f"Google Scholar validation inconclusive: {validation_result.get('evidence', 'Mixed evidence')}")
             else:
-                # No Google Scholar validation available - use conservative classification
+                # No Google Scholar validation - use INCONCLUSIVE to be safe
                 reasons.append("No major academic databases found this reference")
                 reasons.append(f"Low similarity score ({similarity_score:.2f}) with partial matches only")
-                reasons.append("Pattern suggests fabricated reference")
-                return ClassificationResult.FABRICATED, 0.75, reasons
+                reasons.append("Could be new paper, specialized venue, or extraction error")
+                reasons.append("Manual verification recommended")
+                return ClassificationResult.INCONCLUSIVE, 0.55, reasons  # Changed from FABRICATED 0.75
         
         # ENHANCED DOI VALIDATION WITH METADATA MATCHING
         # If we have a DOI, validate it and check metadata matches to prevent fraudulent DOI usage
@@ -1356,10 +1372,22 @@ class ReferenceClassifier:
                 
             return ClassificationResult.SUSPICIOUS, confidence, reasons
         
-        # Low similarity - likely fabricated or fake (but check DOI first)
+        # Low similarity - check for rescue conditions before marking as fabricated
         elif similarity_score > self.inconclusive_threshold:
-            confidence = 0.7 + self.fraud_confidence_boost
+            confidence = 0.6 + self.fraud_confidence_boost  # REDUCED from 0.7
             reasons.append(f"Low similarity score ({similarity_score:.2f})")
+            
+            # RESCUE LOGIC: High title similarity can rescue low overall similarity
+            # This handles cases where author/venue mismatches drag down the score
+            if best_match:
+                title_sim = self._calculate_title_similarity(extracted_ref, best_match)
+                if title_sim > 0.8:
+                    reasons.append(f"However, title matches well ({title_sim:.2f}) - likely same paper with metadata variations")
+                    reasons.append("Upgrading to SUSPICIOUS instead of FABRICATED")
+                    return ClassificationResult.SUSPICIOUS, max(0.5, similarity_score + 0.15), reasons
+                elif title_sim > 0.6:
+                    reasons.append(f"Partial title match ({title_sim:.2f}) - may be related work or extraction error")
+                    # Continue to DOI check but be more lenient
             
             # Enhanced DOI metadata validation can rescue low-similarity legitimate papers
             if doi_validation_result and doi_validation_result.get('metadata_valid', False):
@@ -1378,36 +1406,48 @@ class ReferenceClassifier:
                 
             elif doi_validation_result and doi_validation_result.get('doi_resolves', False):
                 # DOI resolves but metadata doesn't match - could be reference error or fraud
-                reasons.append("[WARNING] DOI resolves but metadata doesn't match claimed details")
+                reasons.append("[NOTE] DOI resolves but metadata doesn't match claimed details")
                 validation_details = doi_validation_result.get('validation_details', [])
                 for detail in validation_details[:2]:  # Show first 2 details
                     reasons.append(f"  - {detail}")
-                reasons.append("Upgrade to suspicious due to resolving DOI, but metadata mismatch is concerning")
+                reasons.append("Upgrading to SUSPICIOUS due to resolving DOI")
                 return ClassificationResult.SUSPICIOUS, max(0.4, similarity_score + 0.1), reasons
+            
+            # Before marking as FABRICATED, apply confidence dampening
+            max_fabricated_conf = getattr(config, 'MAX_FABRICATED_CONFIDENCE', 0.70)
+            confidence = min(confidence, max_fabricated_conf)  # Cap confidence for FABRICATED
             
             # Check if this appears to be completely made up
             if similarity_score < 0.1:
-                reasons.append("Extremely low similarity suggests fabricated reference")
-                return ClassificationResult.FABRICATED, confidence, reasons
+                reasons.append("Very low similarity - manual verification recommended")
+                return ClassificationResult.INCONCLUSIVE, confidence * 0.8, reasons  # Changed from FABRICATED
             else:
                 reasons.append("Searched across {} databases but found no strong matches".format(num_databases))
-                return ClassificationResult.FABRICATED, confidence, reasons
+                reasons.append("This could be a new paper, specialized venue, or extraction error")
+                return ClassificationResult.INCONCLUSIVE, confidence, reasons  # Changed from FABRICATED
             
-        # Very low or no similarity - clearly fabricated
+        # Very low or no similarity - use INCONCLUSIVE instead of FABRICATED to reduce false positives
         else:
             if not best_match:
-                reasons.append("No similar papers found in any database")
-                reasons.append("Complete absence from academic databases strongly suggests fabrication")
-                return ClassificationResult.FABRICATED, 0.8 + self.fraud_confidence_boost, reasons
+                reasons.append("No similar papers found in searched databases")
+                reasons.append("This could be a new paper, from a specialized venue, or contain extraction errors")
+                reasons.append("Manual verification recommended")
+                return ClassificationResult.INCONCLUSIVE, 0.5, reasons  # Changed from FABRICATED with 0.8
             else:
-                confidence = 0.75 + self.fraud_confidence_boost
+                # There's a match but very low similarity - check for rescue conditions
+                title_sim = self._calculate_title_similarity(extracted_ref, best_match)
+                
+                # RESCUE: High title similarity rescues even very low overall similarity
+                if title_sim > 0.75:
+                    reasons.append(f"Very low overall similarity but title matches well ({title_sim:.2f})")
+                    reasons.append("Likely same paper with significant metadata differences")
+                    return ClassificationResult.SUSPICIOUS, 0.5, reasons
+                
+                confidence = 0.55 + self.fraud_confidence_boost  # REDUCED from 0.75
                 reasons.append("Very low similarity to known papers")
-                reasons.append("No meaningful similarity to any papers in academic databases")
-                reasons.append(f"Comprehensive search across {num_databases} databases found no matches")
-                reasons.append("Reference appears to be fabricated")
-                return ClassificationResult.FABRICATED, confidence, reasons
-            
-            return ClassificationResult.FABRICATED, confidence, reasons
+                reasons.append("Reference may be from specialized venue or not yet indexed")
+                reasons.append(f"Searched {num_databases} databases - manual verification recommended")
+                return ClassificationResult.INCONCLUSIVE, confidence, reasons  # Changed from FABRICATED
     
     def _assess_overall_risk(self, authentic_pct: float, fake_pct: float, suspicious_pct: float, 
                              fraud_pct: float, retracted_count: int = 0) -> str:
@@ -1415,31 +1455,31 @@ class ReferenceClassifier:
         # First check for retracted papers - always flag them
         if retracted_count > 0:
             if retracted_count == 1:
-                retraction_warning = f"[WARNING] {retracted_count} paper has been RETRACTED"
+                retraction_warning = f"[NOTE] {retracted_count} paper has been RETRACTED"
             else:
-                retraction_warning = f"[WARNING] {retracted_count} papers have been RETRACTED"
+                retraction_warning = f"[NOTE] {retracted_count} papers have been RETRACTED"
             
-            # Combine with fraud assessment
+            # Combine with review recommendation
             if fraud_pct > 15 or fake_pct > 20:
-                return f"{retraction_warning}. [CRITICAL] Significant fraud detected (author manipulation or fabrication)"
+                return f"{retraction_warning}. [REVIEW RECOMMENDED] Some references could not be verified - please double-check flagged items"
             elif fraud_pct > 5 or fake_pct > 10 or suspicious_pct > 30:
-                return f"{retraction_warning}. [HIGH RISK] Notable fraud or suspicious references detected"
+                return f"{retraction_warning}. [REVIEW RECOMMENDED] Some references require manual verification"
             elif fraud_pct > 0 or fake_pct > 5 or suspicious_pct > 15:
-                return f"{retraction_warning}. [MEDIUM RISK] Some concerning references require investigation"
+                return f"{retraction_warning}. [REVIEW SUGGESTED] A few references may need verification"
             else:
                 return f"{retraction_warning}. Citing retracted papers may compromise research integrity"
         
-        # Standard risk assessment without retractions
+        # Standard assessment without retractions
         if fraud_pct > 15 or fake_pct > 20:
-            return "[CRITICAL] Significant fraud detected (author manipulation or fabrication)"
+            return "[REVIEW RECOMMENDED] Some references could not be verified - please double-check flagged items"
         elif fraud_pct > 5 or fake_pct > 10 or suspicious_pct > 30:
-            return "[HIGH RISK] Notable fraud or suspicious references detected"
+            return "[REVIEW RECOMMENDED] Some references require manual verification"
         elif fraud_pct > 0 or fake_pct > 5 or suspicious_pct > 15:
-            return "[MEDIUM RISK] Some concerning references require investigation"
+            return "[REVIEW SUGGESTED] A few references may need verification"
         elif suspicious_pct > 5:
-            return "[LOW RISK] Minor concerns with some references"
+            return "[INFO] Minor concerns with some references - verification recommended"
         else:
-            return "[MINIMAL RISK] References appear authentic with rigorous verification"
+            return "[OK] References appear authentic with rigorous verification"
     
     def _get_ai_verification(self, extracted_ref: Dict[str, Any], search_results: List[Dict[str, Any]]):
         """

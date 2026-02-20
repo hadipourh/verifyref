@@ -1,6 +1,6 @@
 # VerifyRef Technical Documentation
 
-**Version**: 1.0.0  
+**Version**: 1.1.0  
 **Last Updated**: February 2026  
 **Author**: Hosein Hadipour  
 **License**: GPL-3.0
@@ -323,8 +323,8 @@ The classifier uses weighted similarity scoring:
 
 ```python
 similarity = (
-    title_similarity * 0.45 +
-    author_similarity * 0.35 +
+    title_similarity * 0.55 +   # Increased - most reliable signal
+    author_similarity * 0.25 +  # Reduced - name variations cause FPs
     venue_similarity * 0.15 +
     year_similarity * 0.05
 )
@@ -334,18 +334,22 @@ similarity = (
 
 | Threshold | Value | Description |
 |-----------|-------|-------------|
-| Authentic | >= 0.55 | High confidence match |
-| Suspicious | 0.25 - 0.55 | Needs review |
-| Fabricated | < 0.25 | No credible match |
+| Authentic | >= 0.50 | High confidence match |
+| Suspicious | 0.20 - 0.50 | Needs review |
+| Inconclusive | < 0.20 | No credible match - manual verification needed |
+
+> **Note**: Thresholds have been adjusted in v1.1.0 to reduce false positives. References that cannot be verified are now classified as INCONCLUSIVE rather than FABRICATED.
 
 ### Author Manipulation Detection
 
 Triggered when:
-- Title similarity > 70%
-- Author similarity < 40%
+- Title similarity > 80% (increased from 70% to reduce FPs)
+- Author similarity < 25% (reduced from 40% to reduce FPs)
 - Best match found in database
+- Paper found in fewer than 2 databases
+- Title similarity < 95% (very high matches skip this check)
 
-This catches cases where someone copies a real paper title but changes the authors.
+This catches cases where someone copies a real paper title but changes the authors, while reducing false positives from name format variations.
 
 ### Retraction Detection
 
@@ -423,10 +427,10 @@ NCBI_API_KEY = ""
 
 # Classification thresholds
 CLASSIFICATION_CONFIG = {
-    "similarity_threshold": 0.55,
-    "suspicious_threshold": 0.25,
-    "title_weight": 0.45,
-    "author_weight": 0.35,
+    "similarity_threshold": 0.50,
+    "suspicious_threshold": 0.20,
+    "title_weight": 0.55,
+    "author_weight": 0.25,
     "venue_weight": 0.15,
     "year_weight": 0.05,
 }

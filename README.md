@@ -5,6 +5,15 @@
 
 A tool for verifying the authenticity of academic references in PDF documents using multiple academic databases and optional AI-powered analysis.
 
+> **⚠️ Important Note for Reviewers**  
+> This tool may produce **false positives** — authentic references can sometimes be flagged as suspicious or unverified. This can happen due to:
+> - New papers not yet indexed in databases
+> - Author name format variations (e.g., "J. Smith" vs "John Smith")
+> - Regional or specialized venues with limited database coverage
+> - OCR/extraction errors from PDF processing
+>
+> **Always manually verify flagged references** before making decisions. VerifyRef is a screening tool to assist human reviewers, not a replacement for careful manual checking.
+
 ## Why VerifyRef?
 
 While reviewing a journal submission, I found a reference that listed my brother, a businessman with no connection to cryptography, as a co-author of a paper on symmetric-key cryptanalysis with a well-known researcher. My brother had nothing to do with this paper. This triggered me to inspect that reference and others in the paper, which turned out to be partially AI-generated with multiple fake references.
@@ -24,10 +33,10 @@ Manually checking dozens of references was time-consuming, so I created VerifyRe
 | [!] INCONCLUSIVE          |     0 |       0.0% |   -    |
 +---------------------------+-------+------------+--------+
 
-[HIGH RISK] Significant fraud detected
+[REVIEW RECOMMENDED] Some references could not be verified - please double-check flagged items
 ```
 
-This tool helps reviewers quickly identify potentially fabricated references and AI-generated content, making the peer review process more efficient. Note that VerifyRef is not a replacement for human judgment but a powerful assistant to streamline the verification process.
+This tool helps reviewers quickly identify potentially problematic references and AI-generated content, making the peer review process more efficient. Note that VerifyRef is not a replacement for human judgment but a powerful assistant to streamline the verification process. **The tool may occasionally misclassify authentic references, so always double-check flagged items manually.**
 
 ## Features
 
