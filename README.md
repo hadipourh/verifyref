@@ -5,7 +5,7 @@
 
 A tool for verifying the authenticity of academic references in PDF documents using multiple academic databases and optional AI-powered analysis.
 
-> **⚠️ Important Note for Reviewers**  
+> **Important Note for Reviewers**  
 > This tool may produce **false positives** — authentic references can sometimes be flagged as suspicious or unverified. This can happen due to:
 > - New papers not yet indexed in databases
 > - Author name format variations (e.g., "J. Smith" vs "John Smith")
@@ -21,19 +21,19 @@ While reviewing a journal submission, I found a reference that listed my brother
 Manually checking dozens of references was time-consuming, so I created VerifyRef to automatically extract and verify references against trusted academic databases. Here is the summary of the output for that paper:
 
 ```
-                   Verification Summary
-+---------------------------+-------+------------+--------+
-| Classification            | Count | Percentage | Status |
-+---------------------------+-------+------------+--------+
-| [+] AUTHENTIC             |     6 |      33.3% |   *    |
-| [?] SUSPICIOUS            |     8 |      44.4% |   *    |
-| [X] FAKE                  |     0 |       0.0% |   -    |
-| [~] AUTHOR MANIPULATION   |     0 |       0.0% |   -    |
-| [-] FABRICATED            |     4 |      22.2% |   *    |
-| [!] INCONCLUSIVE          |     0 |       0.0% |   -    |
-+---------------------------+-------+------------+--------+
+                   Verification Summary                   
+╭──────────────────────────┬───────┬────────────┬────────╮
+│ Classification           │ Count │ Percentage │ Status │
+├──────────────────────────┼───────┼────────────┼────────┤
+│ [+] AUTHENTIC            │    11 │      61.1% │   *    │
+│ [?] SUSPICIOUS           │     6 │      33.3% │   *    │
+│ [X] FAKE                 │     0 │       0.0% │   -    │
+│ [~] AUTHOR MANIPULATION  │     1 │       5.6% │   *    │
+│ [-] FABRICATED           │     0 │       0.0% │   -    │
+│ [!] INCONCLUSIVE         │     0 │       0.0% │   -    │
+╰──────────────────────────┴───────┴────────────┴────────╯
 
-[REVIEW RECOMMENDED] Some references could not be verified - please double-check flagged items
+[REVIEW RECOMMENDED] Some references require manual verification
 ```
 
 This tool helps reviewers quickly identify potentially problematic references and AI-generated content, making the peer review process more efficient. Note that VerifyRef is not a replacement for human judgment but a powerful assistant to streamline the verification process. **The tool may occasionally misclassify authentic references, so always double-check flagged items manually.**

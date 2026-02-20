@@ -622,11 +622,8 @@ def verify_references(input_path: str, output_file: str = None, output_format: s
         # Determine output format
         format_to_use = determine_output_format(output_file, output_format)
         save_results(results, output_file, format_to_use, classifier, console)
-    else:
-        # Generate human-readable report for console output
-        report = generate_human_readable_report(results, classifier)
-        console.print("\n" + "="*80)
-        console.print(report)
+    # Note: When no output file, the summary table was already displayed above
+    # No need to print the full human-readable report to console (it's too verbose)
 
 def apply_context_filtering(results: List[Dict[str, Any]], context_type: str, verbose: bool = False) -> List[Dict[str, Any]]:
     """Apply context-aware filtering and boosting to search results"""
@@ -1226,6 +1223,9 @@ Examples:
   verifyref --verify references.txt --verbose
         """
     )
+    
+    # Version argument
+    parser.add_argument('--version', '-V', action='version', version='%(prog)s 1.1.1')
     
     # Main command group
     group = parser.add_mutually_exclusive_group(required=True)
